@@ -5,8 +5,11 @@ mock_provider "azapi" {
   override_during = plan
 }
 
+# Standalone overrides default to apply, separately from mock_provider timing.
+# These assertions need the overridden IDs/endpoints available during plan.
 override_data {
-  target = data.azurerm_client_config.current
+  target          = data.azurerm_client_config.current
+  override_during = plan
   values = {
     tenant_id       = "22222222-2222-2222-2222-222222222222"
     subscription_id = "11111111-1111-1111-1111-111111111111"
@@ -15,7 +18,8 @@ override_data {
 }
 
 override_resource {
-  target = azurerm_user_assigned_identity.products
+  target          = azurerm_user_assigned_identity.products
+  override_during = plan
   values = {
     id           = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-ecommercestore-products-dev"
     client_id    = "55555555-5555-5555-5555-555555555555"
@@ -24,7 +28,8 @@ override_resource {
 }
 
 override_resource {
-  target = azurerm_storage_account.photos
+  target          = azurerm_storage_account.photos
+  override_during = plan
   values = {
     id                    = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.Storage/storageAccounts/stecproductsdevdemo01"
     primary_blob_endpoint = "https://stecproductsdevdemo01.blob.core.windows.net/"
@@ -32,35 +37,40 @@ override_resource {
 }
 
 override_resource {
-  target = azurerm_storage_container.photos
+  target          = azurerm_storage_container.photos
+  override_during = plan
   values = {
     id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.Storage/storageAccounts/stecproductsdevdemo01/blobServices/default/containers/photos"
   }
 }
 
 override_resource {
-  target = azurerm_virtual_network.products
+  target          = azurerm_virtual_network.products
+  override_during = plan
   values = {
     id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.Network/virtualNetworks/vnet-ecommercestore-products-dev"
   }
 }
 
 override_resource {
-  target = azurerm_subnet.aca
+  target          = azurerm_subnet.aca
+  override_during = plan
   values = {
     id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.Network/virtualNetworks/vnet-ecommercestore-products-dev/subnets/snet-aca"
   }
 }
 
 override_resource {
-  target = azurerm_key_vault.products
+  target          = azurerm_key_vault.products
+  override_during = plan
   values = {
     id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.KeyVault/vaults/kv-ecp-dev-demo01"
   }
 }
 
 override_resource {
-  target = azurerm_mssql_server.products
+  target          = azurerm_mssql_server.products
+  override_during = plan
   values = {
     id                          = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.Sql/servers/sql-ecommercestore-products-dev-demo01"
     fully_qualified_domain_name = "sql-ecommercestore-products-dev-demo01.database.windows.net"
@@ -68,7 +78,8 @@ override_resource {
 }
 
 override_resource {
-  target = azapi_resource.products_database
+  target          = azapi_resource.products_database
+  override_during = plan
   values = {
     output = {
       properties = {
