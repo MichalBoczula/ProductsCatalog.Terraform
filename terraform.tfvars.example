@@ -1,0 +1,9 @@
+environment  = "dev"
+name_suffix  = "mb261013" # Choose your stable, globally unique 3-8 character suffix.
+location     = "northeurope"
+sql_location = "francecentral"
+
+# Add only when running local SQL migrations; remove after migrations.
+# operator_ipv4 = "203.0.113.10" # Example address; replace with your public IPv4.
+
+# subscription_id, operator_object_id and sql_admin_password come from TF_VAR_*.

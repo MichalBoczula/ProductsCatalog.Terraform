@@ -1,0 +1,6 @@
+# Copy to backend.hcl and reuse your independently managed state account.
+storage_account_name = "REPLACE_WITH_EXISTING_STATE_ACCOUNT"
+container_name       = "tfstate"
+key                  = "products/development.terraform.tfstate"
+
+# Never use the whole-store key development.terraform.tfstate for this root.
