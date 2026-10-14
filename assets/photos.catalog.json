@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "products_source_commit": "5fa6966327dbc7894ce8156cf222b28a0cdf52f5",
+  "models": [
+    {
+      "product_id": "0f62c3e1-8e3e-4b1f-9d74-3d6e2ff2c6d2",
+      "product_name": "Xiaomi POCO F7 12/512GB Black",
+      "folder": "Xiaomi POCO F7 12512GB Black",
+      "notes": []
+    },
+    {
+      "product_id": "a243cf6f-dde1-4c05-8a58-2fa7f04ed984",
+      "product_name": "Xiaomi Redmi 15 5G 4/128GB Midnight Black",
+      "folder": "Xiaomi Redmi 15 5G 4128GB Midnight Black",
+      "notes": []
+    },
+    {
+      "product_id": "5e9d3b34-8005-4b73-9e90-1cc25f8f5c34",
+      "product_name": "Xiaomi Redmi Note 15 Pro 8/256GB Black",
+      "folder": "Xiaomi Redmi Note 15 Pro 8256GB Black",
+      "notes": []
+    },
+    {
+      "product_id": "07d39209-33b8-4274-b82d-2f0c4f341a9a",
+      "product_name": "Xiaomi 15T 5G 12/512 Black 120Hz",
+      "folder": "Xiaomi 15T 5G 12512 Black 120Hz",
+      "notes": []
+    },
+    {
+      "product_id": "8d5f9e61-8a71-4d9a-9d86-3f4ef0c5ed4a",
+      "product_name": "Apple iPhone 15 128GB Blue",
+      "folder": "Apple iPhone 15 128GB Blue",
+      "notes": []
+    },
+    {
+      "product_id": "5b8b2f19-4f6b-4aa7-8a49-1d5f1fd3a7d2",
+      "product_name": "Apple iPhone 16 128GB White",
+      "folder": "Apple iPhone 16 128GB Biały",
+      "notes": []
+    },
+    {
+      "product_id": "3cf6e155-2a07-40e3-9c40-9be5a4c97d6c",
+      "product_name": "Apple iPhone 17 256GB Black",
+      "folder": "Apple iPhone 17 256GB Czarny",
+      "notes": []
+    },
+    {
+      "product_id": "2a3c3fa7-3ffb-4df1-9454-5c243fcbfc7b",
+      "product_name": "Apple iPhone 17 Pro 256GB Silver",
+      "folder": "Apple iPhone 17 Pro 256GB Srebrny",
+      "notes": []
+    },
+    {
+      "product_id": "b7a2a7c1-3caa-4de0-8f3b-0b3bdcc55d5f",
+      "product_name": "Samsung Galaxy S24 8GB/128GB Black",
+      "folder": "Samsung Galaxy S24 8GB128GB Czarny",
+      "notes": []
+    },
+    {
+      "product_id": "3c1c2b2e-0a63-4a6d-8f0c-5d3a1e8f9a21",
+      "product_name": "Samsung Galaxy S25 12/256GB Green",
+      "folder": "Samsung Galaxy S25 12256GB Czarny",
+      "notes": [
+        "The uploaded S25 folder is Black (Czarny), while the existing Products seed names this product Green. Reconcile the color during the migration step."
+      ]
+    },
+    {
+      "product_id": "2c1d2f69-3a9f-4c51-8a6b-8f2c5d6b7a10",
+      "product_name": "Samsung Galaxy A36 5G 8/256GB Black",
+      "folder": "Samsung Galaxy A36 5G 8256GB",
+      "notes": []
+    },
+    {
+      "product_id": "f2c7d5b1-4a9e-4a1a-8e3c-9b2f1d7c6a55",
+      "product_name": "Samsung Galaxy A56 5G 8/128GB Black",
+      "folder": "Samsung Galaxy A56 5G 8128GB",
+      "notes": []
+    },
+    {
+      "product_id": "c9b7d8e1-0f4a-4d3b-9a1c-2e6f7b8c9d10",
+      "product_name": "Samsung Galaxy A16 4/128GB Black",
+      "folder": "Samsung Galaxy A16 4128GB",
+      "notes": []
+    },
+    {
+      "product_id": "d7b0f3c2-4a6f-4b2d-8c1e-1f2a3b4c5d6e",
+      "product_name": "Motorola Signature 5G 16/512GB Carbon 165Hz",
+      "folder": "Motorola Signature 5G 16512GB Carbon 165Hz",
+      "notes": []
+    },
+    {
+      "product_id": "a5f1c3d7-2b9e-4f6a-8c1d-0e9b7a6c5d4f",
+      "product_name": "Motorola moto g86 power 5G 12/256GB Spellbound 120Hz",
+      "folder": "Motorola moto g86 power 5G 12256GB Spellbound 120Hz",
+      "notes": []
+    }
+  ]
+}

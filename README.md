@@ -127,7 +127,35 @@ if ($LASTEXITCODE -eq 1) { throw 'Verification plan failed' }
 if ($LASTEXITCODE -eq 2) { throw 'Infrastructure still has changes to review' }
 ```
 
-`photos_base_url` is the canonical address prefix, **not an anonymous-access URL**. Do not upload photo files into Terraform state or store expiring SAS tokens in migrations. The next stage builds the importer and manifest.
+`photos_base_url` is the canonical address prefix, **not an anonymous-access URL**. Do not upload photo files into Terraform state or store expiring SAS tokens in migrations.
+
+## Import catalog photos after apply
+
+The repository contains 15 model folders and 60 WebP files under `assets/photos/`. Each folder has `Main`, `Front`, `Back` and `Side`. The explicit folder-to-Products-ID mapping is in [assets/photos.catalog.json](assets/photos.catalog.json).
+
+Use PowerShell **7.2 or later**. Validate the local files first; this does not need Azure or an applied environment:
+
+```powershell
+.\scripts\Import-ProductPhotos.ps1 -ValidateOnly
+```
+
+After the foundation has been applied and you have selected its subscription in Azure CLI, upload:
+
+```powershell
+.\scripts\Import-ProductPhotos.ps1 -TerraformPath $ecommerceTerraform
+```
+
+The importer verifies the private target container, uses your Azure login, uploads or repairs changed images, skips unchanged images and verifies all 60 blobs before replacing the local **photo-manifest.json**. That generated file is ignored by Git. It includes stable, URL-encoded blob addresses and the product IDs needed for the next migration step. Files are imported separately from Terraform apply.
+
+See [the photo import guide](docs/photo-import.md) for repeat imports, failure recovery, manifest fields and the S25 color difference requiring review before migrations. If you destroyed the environment, provision it again before running the upload command.
+
+Run the importer checks offline:
+
+```powershell
+pwsh -NoProfile -File .\tests\Test-ImportProductPhotos.ps1
+```
+
+These checks use fake commands and temporary fixtures. They do not contact Azure, run Terraform or upload photos.
 
 ## Destroy only this Products environment
 

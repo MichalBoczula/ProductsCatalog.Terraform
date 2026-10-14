@@ -12,6 +12,7 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 photo-manifest*.json
+.photo-manifest-*.tmp
 foundation-output*.json
 
 !terraform.tfvars.example
