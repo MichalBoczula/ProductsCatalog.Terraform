@@ -62,6 +62,11 @@ function global:Invoke-PhotoTestAzure {
         if ($state.mode -eq 'VerificationFailure' -and $state.list_calls -eq 2) {
             $state.remote[$state.first_blob].properties.contentSettings.contentMd5 = 'invalid'
         }
+        if ($state.mode -eq 'NativeUnicode') {
+            # Exercise actual native stdout decoding, not just PowerShell strings.
+            [IO.File]::WriteAllText($state.native_json, (ConvertTo-Json -InputObject @($state.remote.Values) -Depth 10 -Compress), [Text.UTF8Encoding]::new($false))
+            return & ([Environment]::ProcessPath) -NoProfile -File $state.native_writer $state.native_json
+        }
         return ConvertTo-Json -InputObject @($state.remote.Values) -Depth 10 -Compress
     }
     if ($operation -eq 'storage blob upload') {
@@ -128,6 +133,8 @@ function New-TestFixture {
         list_calls = 0
         upload_attempts = 0
         successful_uploads = 0
+        native_json = Join-Path $root 'native.json'
+        native_writer = Join-Path $root 'native-writer.ps1'
         first_blob = "$($models[0].folder)/Main.webp"
         first_folder = Join-Path $photos $models[0].folder
         foundation = @{
@@ -139,6 +146,11 @@ function New-TestFixture {
             photos_access = 'private'
         }
     }
+    [IO.File]::WriteAllText($global:PhotoImportTestState.native_writer, @'
+param([string]$InputPath)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::Write([IO.File]::ReadAllText($InputPath, [Text.Encoding]::UTF8))
+'@, [Text.UTF8Encoding]::new($false))
     return @{ PhotosPath = $photos; CatalogPath = $catalogPath; ManifestPath = (Join-Path $root 'photo-manifest.json'); TerraformPath = 'Invoke-PhotoTestTerraform'; AzureCliPath = 'Invoke-PhotoTestAzure' }
 }
 
@@ -255,7 +267,8 @@ try {
             $options = New-TestFixture $mode
             [IO.File]::WriteAllText($options.ManifestPath, 'previous complete manifest')
             $global:PhotoImportTestState.mode = $mode
-            Assert-ImportFailure $options 'failed'
+            $pattern = if ($mode -eq 'VerificationFailure') { 'Mismatched fields: properties.contentSettings.contentMd5' } else { 'failed' }
+            Assert-ImportFailure $options $pattern
             Assert-Check ((Get-Content $options.ManifestPath -Raw) -ceq 'previous complete manifest') 'The last complete manifest must survive a failed import.'
         }
     }
@@ -283,6 +296,33 @@ try {
         $result = Invoke-TestImport $options
         Assert-Check ($result.uploaded -eq 1 -and $result.skipped -eq 7) 'Only the blob with incorrect MIME settings should be repaired.'
         Assert-Check ($global:PhotoImportTestState.remote['unrelated.txt'].metadata.marker -ceq 'keep') 'Unrelated blobs must remain intact.'
+    }
+    Invoke-Check 'native Unicode output verifies and repeats under a legacy console encoding' {
+        $options = New-TestFixture 'native-unicode'
+        $global:PhotoImportTestState.mode = 'NativeUnicode'
+        $savedEncoding = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(1250)
+            $result = Invoke-TestImport $options
+            Assert-Check ($result.uploaded -eq 8) 'Native JSON must preserve the Biały blob names during verification.'
+            Assert-Check ([Console]::OutputEncoding.CodePage -eq 1250) 'The importer must restore the console encoding.'
+            $result = Invoke-TestImport $options
+            Assert-Check ($result.uploaded -eq 0 -and $result.skipped -eq 8) 'Correctly decoded Unicode blobs must be skipped on repeat.'
+            Assert-Check ([Console]::OutputEncoding.CodePage -eq 1250) 'Repeat import must restore the console encoding.'
+        }
+        finally { [Console]::OutputEncoding = $savedEncoding }
+    }
+    Invoke-Check 'failed command restores the caller console encoding' {
+        $options = New-TestFixture 'encoding-on-failure'
+        $global:PhotoImportTestState.mode = 'TerraformFailure'
+        $savedEncoding = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(1250)
+            Assert-ImportFailure $options 'Reading Products Terraform outputs failed'
+            Assert-Check ([Console]::OutputEncoding.CodePage -eq 1250) 'A failed command must restore the console encoding.'
+            Assert-Check (-not (Test-Path $options.ManifestPath)) 'A failed command must not create a manifest.'
+        }
+        finally { [Console]::OutputEncoding = $savedEncoding }
     }
     Write-Host "Success: $checkCount offline photo-import checks passed."
 }

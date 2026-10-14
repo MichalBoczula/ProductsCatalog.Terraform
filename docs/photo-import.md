@@ -70,6 +70,22 @@ The manifest includes:
 
 Canonical URLs identify private objects; they do not authorize anonymous browser access. The later API/BFF or short-lived signed-URL delivery step must provide access. Do not store expiring SAS tokens in SQL seed data. Do not commit environment-specific generated manifests; the mapping and original images are the versioned inputs.
 
+## Windows Unicode handling
+
+Captured Azure CLI JSON can use a Windows ANSI encoding while PowerShell decodes it differently. This can make a correctly uploaded name such as `Apple iPhone 16 128GB Biały/Main.webp` disappear from the importer's name lookup. A repeat upload then hits `BlobAlreadyExists` because the create-only condition correctly protects the existing blob.
+
+For the official Windows MSI/ZIP launchers, the importer discovers their bundled `python.exe` and runs Azure CLI with explicit `-X utf8 -IBm azure.cli`. The standard launcher's `-I` flag ignores Python encoding environment variables, so setting `PYTHONUTF8` alone is insufficient. Captured native output is decoded as UTF-8, with the caller's console encoding restored even after errors. The installed launchers and global Windows settings are unchanged.
+
+If an earlier run uploaded the collection but failed on `Biały`, pull this correction and rerun:
+
+```powershell
+git pull --ff-only origin main
+if ($LASTEXITCODE -ne 0) { throw 'Git pull failed' }
+.\scripts\Import-ProductPhotos.ps1 -TerraformPath $ecommerceTerraform
+```
+
+If all 60 blobs already match, expect **uploaded 0; skipped 60**. A failed first import does not create `photo-manifest.json`; it appears only after every mapped blob passes verification. Verification errors now identify the mismatched fields, such as `contentMd5`, or a missing blob name. Keep these checks enabled when diagnosing a remaining failure.
+
 ## Failure recovery
 
 - New role assignments may take time to propagate. If Azure returns an authorization error, verify the signed-in operator and assigned role, allow propagation, then rerun the importer.
@@ -80,8 +96,10 @@ Canonical URLs identify private objects; they do not authorize anonymous browser
 
 ## Validation performed
 
-All **24 offline checks** pass using PowerShell 7.5.3. They exercise the actual 60-image collection and native-command-shaped fake responses, repeat imports, single-image changes, URL encoding, role ordering, legacy/MIME repair, target checks, partial failure, failed verification, concurrent writes and manifest preservation. Azure CLI response shapes, Base64 MD5 handling and list options were checked against the official Azure CLI source.
+All **26 offline checks** pass using PowerShell 7.5.3. They exercise the actual 60-image collection and native-command-shaped fake responses, repeat imports, single-image changes, URL encoding, role ordering, legacy/MIME repair, target checks, partial failure, failed verification, concurrent writes and manifest preservation. An additional native child process emits UTF-8 JSON containing `Biały` while the caller uses Windows code page 1250; the original importer reproduces the reported verification failure, and the corrected importer verifies and skips those blobs on repeat. Encoding restoration is checked on success and failure. Azure CLI response shapes, Base64 MD5 handling and list options were checked against the official Azure CLI source.
 
-No live Azure upload was performed while preparing the importer. The first operator run verifies actual permissions and the Azure data path. The Terraform resources and provider lock are unchanged by this stage.
+The operator's Windows run reported successful upload calls for all 60 images, followed by a Unicode-name verification failure. The correction has been checked offline; a live operator retry is still required to confirm the actual Windows Azure CLI installation and Azure data path. The Terraform resources and provider lock are unchanged by this stage.
 
 References: [Azure CLI blob commands](https://learn.microsoft.com/en-us/cli/azure/storage/blob?view=azure-cli-latest), [Blob data RBAC](https://learn.microsoft.com/en-us/azure/storage/blobs/assign-azure-role-data-access), [Azure CLI storage transformers](https://github.com/Azure/azure-cli/blob/dev/src/azure-cli/azure/cli/command_modules/storage/_transformers.py).
+
+Unicode references: [Azure CLI Windows MSI launcher](https://github.com/Azure/azure-cli/blob/dev/build_scripts/windows/scripts/az_msi.cmd), [Python isolated and UTF-8 options](https://docs.python.org/3/using/cmdline.html).

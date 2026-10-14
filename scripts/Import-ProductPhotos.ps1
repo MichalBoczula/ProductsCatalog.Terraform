@@ -25,16 +25,44 @@ function Invoke-ImportJsonCommand {
     param([string]$Command, [string[]]$CommandArguments, [string]$Operation)
     # Native errors are checked explicitly; keep stdout separate from diagnostics.
     $PSNativeCommandUseErrorActionPreference = $false
-    $raw = @(& $Command @CommandArguments)
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Operation failed (exit $LASTEXITCODE). Resolve the error above and rerun the importer."
+    $savedEncoding = [Console]::OutputEncoding
+    try {
+        # PowerShell uses this encoding when decoding captured native stdout.
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $raw = @(& $Command @CommandArguments)
+        if ($LASTEXITCODE -ne 0) {
+            throw "$Operation failed (exit $LASTEXITCODE). Resolve the error above and rerun the importer."
+        }
     }
+    finally { [Console]::OutputEncoding = $savedEncoding }
     try {
         return ConvertFrom-Json -InputObject ($raw -join [Environment]::NewLine) -AsHashtable -Depth 100 -NoEnumerate
     }
     catch {
         throw "$Operation returned invalid JSON."
     }
+}
+
+function Resolve-AzureImportCommand {
+    $command = Get-Command $AzureCliPath -ErrorAction Stop
+    $prefix = @()
+    $path = $AzureCliPath
+    if ($IsWindows -and $command.CommandType -in @('Application', 'ExternalScript') -and
+        [IO.Path]::GetFileName($command.Path) -in @('az.cmd', 'az.bat', 'az.ps1')) {
+        # MSI/ZIP launchers use isolated Python (-I), ignoring PYTHONUTF8 and
+        # PYTHONIOENCODING. Explicit -X utf8 keeps Polish blob names intact.
+        $path = Join-Path (Split-Path -Parent (Split-Path -Parent $command.Path)) 'python.exe'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Could not find Azure CLI's bundled Python beside $($command.Path). Use the official Windows MSI/ZIP installation."
+        }
+        $prefix = @('-X', 'utf8', '-IBm', 'azure.cli')
+    }
+    return @{ command = $path; prefix = $prefix }
+}
+
+function Invoke-AzureImportJsonCommand {
+    param([string[]]$CommandArguments, [string]$Operation)
+    return Invoke-ImportJsonCommand -Command $azureInvocation.command -Operation $Operation -CommandArguments ($azureInvocation.prefix + $CommandArguments)
 }
 
 function Assert-ImageHeader {
@@ -139,7 +167,7 @@ function Get-PhotoInventory {
 }
 
 function Get-RemotePhotos {
-    $items = Invoke-ImportJsonCommand -Command $AzureCliPath -Operation 'Listing photo blobs' -CommandArguments @(
+    $items = Invoke-AzureImportJsonCommand -Operation 'Listing photo blobs' -CommandArguments @(
         'storage', 'blob', 'list',
         '--account-name', $foundation.storage_account_name,
         '--container-name', $foundation.photos_container_name,
@@ -154,22 +182,27 @@ function Get-RemotePhotos {
     return ,$index
 }
 
+function Get-RemotePhotoMismatches {
+    param($Remote, $Photo)
+    if ($null -eq $Remote) { return 'blob name missing from Azure listing' }
+    $properties = if ($null -ne $Remote['properties']) { $Remote['properties'] } else { @{} }
+    $settings = if ($null -ne $properties['contentSettings']) { $properties['contentSettings'] } else { @{} }
+    $metadata = if ($null -ne $Remote['metadata']) { $Remote['metadata'] } else { @{} }
+    $checks = [ordered]@{
+        'metadata.sha256' = [string]$metadata['sha256'] -ceq $Photo.sha256
+        'metadata.source_product_id' = [string]$metadata['source_product_id'] -ieq $Photo.model.product_id
+        'metadata.photo_role' = [string]$metadata['photo_role'] -ceq $Photo.role
+        'properties.contentLength' = [long]$properties['contentLength'] -eq $Photo.bytes
+        'properties.contentSettings.contentMd5' = [string]$settings['contentMd5'] -ceq $Photo.content_md5
+        'properties.contentSettings.contentType' = [string]$settings['contentType'] -ceq $Photo.content_type
+        'properties.contentSettings.cacheControl' = [string]$settings['cacheControl'] -ceq $cacheControl
+    }
+    foreach ($field in $checks.Keys) { if (-not $checks[$field]) { $field } }
+}
+
 function Test-RemotePhoto {
     param($Remote, $Photo)
-    if ($null -eq $Remote) { return $false }
-    $properties = $Remote.properties
-    $settings = $properties.contentSettings
-    $metadata = $Remote.metadata
-    return (
-        $null -ne $metadata -and
-        [string]$metadata['sha256'] -ceq $Photo.sha256 -and
-        [string]$metadata['source_product_id'] -ieq $Photo.model.product_id -and
-        [string]$metadata['photo_role'] -ceq $Photo.role -and
-        [long]$properties.contentLength -eq $Photo.bytes -and
-        [string]$settings.contentMd5 -ceq $Photo.content_md5 -and
-        [string]$settings.contentType -ceq $Photo.content_type -and
-        [string]$settings.cacheControl -ceq $cacheControl
-    )
+    return @(Get-RemotePhotoMismatches -Remote $Remote -Photo $Photo).Count -eq 0
 }
 
 # Validate the complete local collection before running any Terraform/Azure command.
@@ -187,7 +220,7 @@ if ($ValidateOnly) {
 }
 
 Get-Command $TerraformPath -ErrorAction Stop | Out-Null
-Get-Command $AzureCliPath -ErrorAction Stop | Out-Null
+$azureInvocation = Resolve-AzureImportCommand
 $foundation = Invoke-ImportJsonCommand -Command $TerraformPath -Operation 'Reading Products Terraform outputs' -CommandArguments @(
     "-chdir=$repoRoot", 'output', '-json', 'products_foundation'
 )
@@ -206,13 +239,13 @@ $expectedEndpoint = "https://$($foundation.storage_account_name).blob.core.windo
 if ($foundation.storage_blob_endpoint -cne $expectedEndpoint) {
     throw 'Terraform Blob endpoint does not match the Products storage account.'
 }
-$account = Invoke-ImportJsonCommand -Command $AzureCliPath -Operation 'Reading Azure login context' -CommandArguments @(
+$account = Invoke-AzureImportJsonCommand -Operation 'Reading Azure login context' -CommandArguments @(
     'account', 'show', '--only-show-errors', '--output', 'json'
 )
 if ($account.id -ine $foundation.subscription_id) {
     throw 'Azure CLI subscription differs from Products Terraform outputs. Select the intended subscription and retry.'
 }
-$storage = Invoke-ImportJsonCommand -Command $AzureCliPath -Operation 'Checking the provisioned Products storage account' -CommandArguments @(
+$storage = Invoke-AzureImportJsonCommand -Operation 'Checking the provisioned Products storage account' -CommandArguments @(
     'storage', 'account', 'show', '--name', $foundation.storage_account_name,
     '--resource-group', $foundation.resource_group_name, '--subscription', $foundation.subscription_id,
     '--only-show-errors', '--output', 'json'
@@ -220,7 +253,7 @@ $storage = Invoke-ImportJsonCommand -Command $AzureCliPath -Operation 'Checking 
 if ($storage.primaryEndpoints.blob -cne $expectedEndpoint) {
     throw 'Azure storage endpoint differs from Terraform outputs.'
 }
-$container = Invoke-ImportJsonCommand -Command $AzureCliPath -Operation 'Checking photo container access' -CommandArguments @(
+$container = Invoke-AzureImportJsonCommand -Operation 'Checking photo container access' -CommandArguments @(
     'storage', 'container', 'show', '--account-name', $foundation.storage_account_name,
     '--name', $foundation.photos_container_name, '--auth-mode', 'login',
     '--subscription', $foundation.subscription_id, '--only-show-errors', '--output', 'json'
@@ -265,14 +298,16 @@ foreach ($photo in $inventory.photos) {
         '--metadata', "sha256=$($photo.sha256)", "source_product_id=$($photo.model.product_id)", "photo_role=$($photo.role)",
         '--no-progress', '--only-show-errors', '--output', 'json'
     ) + $condition
-    Invoke-ImportJsonCommand -Command $AzureCliPath -Operation "Uploading $($photo.blob_name)" -CommandArguments $uploadArguments | Out-Null
+    Invoke-AzureImportJsonCommand -Operation "Uploading $($photo.blob_name)" -CommandArguments $uploadArguments | Out-Null
     $uploaded++
 }
 
 $after = Get-RemotePhotos
 foreach ($photo in $inventory.photos) {
-    if (-not $after.ContainsKey($photo.blob_name) -or -not (Test-RemotePhoto -Remote $after[$photo.blob_name] -Photo $photo)) {
-        throw "Uploaded image verification failed: $($photo.blob_name). The previous manifest was preserved."
+    $remote = if ($after.ContainsKey($photo.blob_name)) { $after[$photo.blob_name] } else { $null }
+    $mismatches = @(Get-RemotePhotoMismatches -Remote $remote -Photo $photo)
+    if ($mismatches.Count -gt 0) {
+        throw "Uploaded image verification failed: $($photo.blob_name). Mismatched fields: $($mismatches -join ', '). The previous manifest was preserved."
     }
 }
 
