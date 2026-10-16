@@ -1,17 +1,34 @@
-# Foundation validation
+# Terraform and deployment validation
 
-## Completed checks
+## Reproducible checks
 
-- Terraform 1.16.5 initializes the pinned AzureRM 5.8.0 and AzAPI 2.13.0 providers with `init -backend=false`.
-- `terraform fmt -check -recursive` checks the Terraform files and test syntax/formatting.
-- Ten checks pass in a provider-free harness using copies of the repository's actual `variables.tf`, `locals.tf` and input test run blocks. These cover maximum-length names and invalid subscription/operator IDs, environment, suffixes, password and SQL operator addresses.
-- All eight PowerShell blocks in the manual guide parse with PowerShell 7.5.3.
-- The ACA schema and subnet delegation block shape were checked against the pinned AzureRM provider source. Resource definitions reuse the settings validated in the earlier whole-store foundation.
-- The operator confirmed successful remote backend initialization, full `terraform validate`, and all ten input tests on Windows. The first foundation run exposed explicit overrides still defaulting to apply; each override now explicitly uses `override_during = plan`.
-- A provider-free Terraform 1.16.5 regression reproduces the same unknown-condition error with only provider-level timing. Its two identity-reference/photo-endpoint checks pass after explicit resource-level plan timing is added. This checks override behavior, not the full Azure foundation suite.
+The GitHub `Terraform checks` workflow uses Terraform 1.16.5 and the checked-in
+AzureRM 5.8.0 / AzAPI 2.13.0 lock file. It runs backend-disabled initialization,
+formatting, full provider schema validation, 24 mocked plan tests, and both
+PowerShell test scripts. It has no Azure credentials and never applies real resources.
 
-## Required on the operator's Windows machine
+The Terraform suite covers foundation/naming, private and blob-only anonymous
+photo access, prepare/serve behavior, exact SQL rules, identity-based Key Vault
+references, bounded Consumption scaling, operator-only external testing, and
+rejected image/network/stage inputs.
 
-After pulling the test override correction, rerun `terraform test` before creating a deployment plan. The full suite has 12 mocked test runs (2 foundation checks and 10 input checks). The corrected full suite still requires confirmation on Windows: the preparation runtime prevents providers from opening their plugin sockets (`listen unix ...: socket: operation not permitted`). Provider-free checks do not substitute for full provider schema validation or foundation assertions.
+## Local preparation checks
 
-Remote backend access, Azure RBAC propagation, globally unique name availability, SQL Free eligibility and actual provisioning must be verified during the manual deployment. No Azure apply was performed while preparing this repository.
+- Backend-disabled initialization installs the pinned providers successfully.
+- Terraform formatting and `git diff --check` pass.
+- A provider-free harness using copies of the actual `variables.tf`, `locals.tf`,
+  and input run blocks passes all 18 input checks.
+- PowerShell 7.6.7 passes 28 offline importer checks, including all 60 source
+  photos, Unicode native output, public-read compatibility and repeat imports.
+- The egress helper passes 12 offline checks, including stable deduplicated keys,
+  invalid/empty outputs and preserving the previous input on errors.
+- Full local provider schema/test execution is blocked by the preparation
+  runtime's provider plugin handshake/socket restriction. The provider-free
+  checks do not replace the full mocked suite; GitHub runs it with real plugins.
+
+## Verify during manual Azure rollout
+
+The operator must verify the existing backend/state key, unchanged resource
+ownership, RBAC propagation, the published image tag, actual app egress, SQL
+readiness and anonymous photo HTTP responses. Review every saved plan before
+applying it. No Azure resources were provisioned while preparing these files.

@@ -10,7 +10,7 @@ resource "azurerm_storage_account" "photos" {
   min_tls_version                 = "TLS1_2"
   shared_access_key_enabled       = false
   default_to_oauth_authentication = true
-  allow_nested_items_to_be_public = false
+  allow_nested_items_to_be_public = var.photos_anonymous_read_enabled
   public_network_access           = "Enabled"
   tags                            = local.tags
 
@@ -23,5 +23,5 @@ resource "azurerm_storage_account" "photos" {
 resource "azurerm_storage_container" "photos" {
   name                  = local.names.photos_container
   storage_account_id    = azurerm_storage_account.photos.id
-  container_access_type = "private"
+  container_access_type = var.photos_anonymous_read_enabled ? "blob" : "private"
 }

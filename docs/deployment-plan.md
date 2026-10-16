@@ -4,9 +4,9 @@ Work through one stage at a time. Provisioning and application deployment remain
 
 1. **Prepare the standalone Terraform foundation.** Define the Products resource group, VNet, delegated ACA subnet, Consumption ACA environment, SQL server/database, photo storage/container, managed identity, Key Vault, SQL connection secret and role assignments. Use a dedicated remote state key. Deliver configuration checks and the manual provisioning guide.
 2. **Provision the foundation manually.** Log in locally, initialize the backend, validate/test, review a saved plan, apply, and verify the non-secret outputs. Azure resources are not provisioned merely by preparing this repository.
-3. **Automate photo import.** The 15 model folders and 60 WebP files are now mapped in `assets/photos.catalog.json`. Run `scripts/Import-ProductPhotos.ps1 -ValidateOnly`, then import after apply as described in [the photo import guide](photo-import.md). The importer uses Azure CLI/Entra authentication and exports a verified product/photo URL manifest. This is an import tool, not a Terraform-managed collection of image files. Decide authenticated image delivery and resolve the S25 Black/Green review note before changing database URLs.
-4. **Adjust Products migrations/seed data.** Use the actual imported manifest. Prefer a new migration when earlier migrations may already have run. Do not persist expiring SAS tokens in seeded data. Run migrations separately before the hosted app starts.
-5. **Connect and deploy Products.** Configure Blob endpoint/container and the user-assigned identity in Products. Add the immutable Products image and internal ingress Container App to this foundation. The environment already exists, so discover its outbound addresses and add narrowly scoped SQL firewall rules before deployment. Resolve the SQL secret through Key Vault. Verify liveness, SQL readiness, catalog queries and image retrieval.
+3. **Import photos.** The 15 model folders and 60 WebP files are mapped in `assets/photos.catalog.json`. Import after foundation apply as described in [the photo import guide](photo-import.md). The operator has imported and verified all 60 photos. The S25 name cleanup remains deferred.
+4. **Adjust Products migrations/seed data.** Products uses the verified canonical Blob URLs in its existing disposable-development seed migrations. Recreate that database when the edited migration IDs have already run; no expiring SAS tokens are stored in seed data. The list DTO includes `mainPhoto` in API PR #198; merge it and wait for the master image publish before rollout.
+5. **Connect and deploy Products.** Follow [the manual ACA guide](aca-deployment.md). Enable blob-only anonymous photo reads. Deploy the pinned image with internal ingress, managed identity, and a Key Vault SQL secret reference. Apply `prepare` without SQL readiness or migrations, then capture actual app outbound IPs into plan-known inputs. Review/apply `serve` with exact SQL rules and SQL readiness. One-time startup migrations can seed this disposable database; disable them after verification. Operator-only external API testing is optional.
 
 After Products works, add BFF and frontend in their own steps. The Docker image stays on Docker Hub; the foundation does not introduce another registry. This root creates only Products resources. The former whole-store foundation continues to own any resources already in its state.
 
@@ -16,8 +16,15 @@ Use the existing independently managed Terraform state storage account and `tfst
 
 New Products names intentionally differ from the former whole-store names. This is a new environment; it does not import, move or delete existing resources. If the old environment is still present, both environments exist and can incur costs until you deliberately destroy the old one with its original configuration/state.
 
-## First-stage boundaries
+## Foundation and rollout boundaries
 
-The ACA environment is created now; the Products Container App is created in stage 5. Foundation planning therefore does not depend on apply-time public IP discovery or an image that will change after migration work. Photo import, seed updates, SQL migrations and deployment automation are later stages.
+The ACA environment belongs to the foundation; the Container App is optional.
+Foundation defaults create neither app nor SQL egress rules. Rollout uses two
+reviewed applies so firewall instance keys do not depend on unknown resource
+attributes. SQL remains in France Central and retains its Free offer. No NAT
+gateway or private endpoint is introduced in this disposable stage.
 
-Photos remain private. A canonical Blob URL identifies the object but does not authorize anonymous browser access. Image delivery will use an authenticated API path or a short-lived signed URL. If we choose user-delegation SAS, add the required account-level delegation permission explicitly in that stage; container-level data access alone does not grant permission to request a delegation key.
+Set `photos_anonymous_read_enabled=true` to allow individual photo URLs without
+a login or SAS. The default remains private. Uploads retain Entra RBAC, and
+anonymous listing is not enabled. This affects only the Products photo account
+and container; the independently managed state account remains unchanged.

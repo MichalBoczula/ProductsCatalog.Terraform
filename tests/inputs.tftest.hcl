@@ -92,3 +92,55 @@ run "reject_invalid_firewall_address" {
   variables { operator_ipv4 = "999.1.1.1" }
   expect_failures = [var.operator_ipv4]
 }
+
+run "reject_floating_products_image" {
+  command = plan
+  variables { products_image = "mb0101/product-catalog-api:latest" }
+  expect_failures = [var.products_image]
+}
+
+run "reject_missing_products_image" {
+  command = plan
+  variables { deploy_products_app = true }
+  expect_failures = [var.products_image]
+}
+
+run "reject_unknown_rollout_stage" {
+  command = plan
+  variables { products_deployment_stage = "production" }
+  expect_failures = [var.products_deployment_stage]
+}
+
+run "reject_serve_without_egress" {
+  command = plan
+  variables {
+    deploy_products_app       = true
+    products_image            = "mb0101/product-catalog-api:0123456789abcdef0123456789abcdef01234567"
+    products_deployment_stage = "serve"
+  }
+  expect_failures = [var.products_deployment_stage]
+}
+
+run "reject_azure_wide_aca_firewall" {
+  command = plan
+  variables { products_sql_egress_ipv4 = { egress01 = "0.0.0.0" } }
+  expect_failures = [var.products_sql_egress_ipv4]
+}
+
+run "reject_private_aca_firewall" {
+  command = plan
+  variables { products_sql_egress_ipv4 = { egress01 = "10.43.0.5" } }
+  expect_failures = [var.products_sql_egress_ipv4]
+}
+
+run "reject_prepare_migrations" {
+  command = plan
+  variables { products_apply_migrations = true }
+  expect_failures = [var.products_apply_migrations]
+}
+
+run "reject_external_api_without_operator" {
+  command = plan
+  variables { products_external_ingress_enabled = true }
+  expect_failures = [var.products_external_ingress_enabled]
+}

@@ -1,6 +1,9 @@
-# EcommerceStore Products — Terraform foundation
+# EcommerceStore Products — Terraform
 
-Standalone infrastructure for the Products vertical slice. See [the deployment plan](docs/deployment-plan.md). This first stage prepares infrastructure for photo import and SQL migrations; the Products Container App is added after those stages.
+Standalone infrastructure and manual ACA rollout for the Products vertical slice.
+The foundation remains the default. After importing photos, follow the
+[ACA deployment guide](docs/aca-deployment.md) to enable the app and anonymous
+photo reads. See [the deployment plan](docs/deployment-plan.md).
 
 ## Resources and naming
 
@@ -17,18 +20,18 @@ For `environment = "dev"` and `name_suffix = "mb261013"`:
 | Azure-managed ACA group | `rg-ecommercestore-products-dev-aca-managed` |
 | Products managed identity | `id-ecommercestore-products-dev` |
 | Photo storage account | `stecproductsdevmb261013` |
-| Photo container | `photos` (private) |
+| Photo container | `photos` (private by default; optional blob-only anonymous reads) |
 | Key Vault | `kv-ecp-dev-mb261013` |
 | SQL logical server | `sql-ecommercestore-products-dev-mb261013` |
 | SQL database | `products` |
 | SQL connection secret | `products-sql-connection` |
-| Future Container App (stage 5) | `ca-ecommercestore-products-dev` |
+| Optional Container App | `ca-ecommercestore-products-dev` |
 
-The VNet uses `10.43.0.0/16`, with a delegated `10.43.0.0/27` subnet. SQL uses France Central, preserving the subscription's selected SQL Free region; the other services default to North Europe. SQL and Blob currently use authenticated public service endpoints. The VNet hosts ACA; it does not place those public endpoints inside the VNet.
+The VNet uses `10.43.0.0/16`, with a delegated `10.43.0.0/27` subnet. SQL uses France Central, preserving the subscription's selected SQL Free region; the other services default to North Europe. SQL and Blob use public service endpoints; photo reads can be enabled anonymously while SQL and photo writes retain authentication. The VNet hosts ACA; it does not place those public endpoints inside the VNet.
 
 Products and your operator user receive `Storage Blob Data Contributor` scoped to `photos`. Products receives `Key Vault Secrets User`; the operator receives `Key Vault Secrets Officer`. SQL authentication uses the administrator password for the initial disposable environment. A later retained deployment should use a restricted database user before exposing application traffic.
 
-The default plan creates **15 Terraform-managed resources**, or **16** with `operator_ipv4` set. Azure creates additional ACA networking resources in its managed group. There is no MongoDB, frontend, BFF, image import, Container App or image registry in this first stage. SQL uses the Free offer with `AutoPause` at its monthly limit. Storage, Key Vault and ACA-managed networking can still incur usage charges.
+The default plan creates **15 Terraform-managed resources**, or **16** with `operator_ipv4` set. Rollout adds one Container App and one SQL rule per supplied egress IP. Azure creates additional ACA networking resources in its managed group. There is no MongoDB, frontend, BFF, Terraform-managed image import or image registry. SQL uses the Free offer with `AutoPause` at its monthly limit. Storage, Key Vault and ACA-managed networking can still incur usage charges.
 
 ## Manual provisioning from PowerShell
 
@@ -127,7 +130,9 @@ if ($LASTEXITCODE -eq 1) { throw 'Verification plan failed' }
 if ($LASTEXITCODE -eq 2) { throw 'Infrastructure still has changes to review' }
 ```
 
-`photos_base_url` is the canonical address prefix, **not an anonymous-access URL**. Do not upload photo files into Terraform state or store expiring SAS tokens in migrations.
+`photos_base_url` is the canonical address prefix. It requires authorization while
+`photos_access` is `private`; `blob` enables individual anonymous reads. Do not
+upload photo files into Terraform state or store expiring SAS tokens in migrations.
 
 ## Import catalog photos after apply
 
@@ -145,9 +150,14 @@ After the foundation has been applied and you have selected its subscription in 
 .\scripts\Import-ProductPhotos.ps1 -TerraformPath $ecommerceTerraform
 ```
 
-The importer verifies the private target container, uses your Azure login, uploads or repairs changed images, skips unchanged images and verifies all 60 blobs before replacing the local **photo-manifest.json**. That generated file is ignored by Git. It includes stable, URL-encoded blob addresses and the product IDs needed for the next migration step. Files are imported separately from Terraform apply.
+The importer checks that actual access matches Terraform's `private` or `blob`
+mode, uses your Azure login, uploads or repairs changed images, skips unchanged
+images and verifies all 60 blobs before replacing the local **photo-manifest.json**.
+That generated file is ignored by Git and contains stable, URL-encoded addresses
+and product IDs. Import runs separately from Terraform apply. Changing read access
+does not require reuploading existing photos.
 
-See [the photo import guide](docs/photo-import.md) for repeat imports, failure recovery, manifest fields and the S25 color difference requiring review before migrations. If you destroyed the environment, provision it again before running the upload command.
+See [the photo import guide](docs/photo-import.md) for repeat imports, failure recovery, manifest fields and the retained S25 color review note. Naming cleanup is separate from rollout. If you destroyed the environment, provision it again before running the upload command.
 
 Run the importer checks offline:
 
@@ -156,6 +166,15 @@ pwsh -NoProfile -File .\tests\Test-ImportProductPhotos.ps1
 ```
 
 These checks use fake commands and temporary fixtures. They do not contact Azure, run Terraform or upload photos.
+
+## Deploy the Products API
+
+Follow [the ACA deployment guide](docs/aca-deployment.md) with your existing
+backend and variables. Merge the API changes and wait for the immutable Docker Hub
+image, apply `prepare`, capture actual app egress IPs, then review/apply `serve`.
+Enable `photos_anonymous_read_enabled` for anonymous photo URLs. The API stays
+internal unless you enable operator-only external testing. These repository
+changes do not trigger Azure provisioning.
 
 ## Destroy only this Products environment
 

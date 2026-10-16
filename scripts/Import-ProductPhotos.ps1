@@ -231,9 +231,9 @@ if (
     $foundation.subscription_id -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$' -or
     $foundation.resource_group_name -notmatch '^rg-ecommercestore-products-(dev|test|prod)$' -or
     $foundation.storage_account_name -notmatch '^stecproducts[a-z0-9]+$' -or
-    $foundation.photos_container_name -cne 'photos' -or $foundation.photos_access -cne 'private'
+    $foundation.photos_container_name -cne 'photos' -or $foundation.photos_access -cnotin @('private', 'blob')
 ) {
-    throw 'Terraform outputs do not describe the expected private Products photo storage.'
+    throw 'Terraform outputs do not describe Products photo storage with private or blob-only access.'
 }
 $expectedEndpoint = "https://$($foundation.storage_account_name).blob.core.windows.net/"
 if ($foundation.storage_blob_endpoint -cne $expectedEndpoint) {
@@ -258,8 +258,9 @@ $container = Invoke-AzureImportJsonCommand -Operation 'Checking photo container 
     '--name', $foundation.photos_container_name, '--auth-mode', 'login',
     '--subscription', $foundation.subscription_id, '--only-show-errors', '--output', 'json'
 )
-if ($container.name -cne 'photos' -or -not [string]::IsNullOrEmpty([string]$container.properties.publicAccess)) {
-    throw 'The expected photos container is missing or allows anonymous access.'
+$expectedAccess = if ($foundation.photos_access -ceq 'blob') { 'blob' } else { '' }
+if ($container.name -cne 'photos' -or [string]$container.properties.publicAccess -cne $expectedAccess) {
+    throw 'The photos container access differs from Terraform photos_access. Apply the intended Terraform configuration before importing.'
 }
 
 $before = Get-RemotePhotos
@@ -344,7 +345,7 @@ $manifest = [ordered]@{
     resource_group_name = $foundation.resource_group_name
     storage_account_name = $foundation.storage_account_name
     photos_container_name = $foundation.photos_container_name
-    photos_access = 'private'
+    photos_access = $foundation.photos_access
     uploaded = $uploaded
     skipped = $skipped
     products = @($manifestProducts)

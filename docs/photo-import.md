@@ -1,6 +1,12 @@
 # Import Products photos
 
-This stage imports the checked-in catalog photos into the existing private `photos` container and exports a verified manifest for the later Products migration. Run the importer manually **after** Terraform apply. It does not provision infrastructure, change the database or deploy an application.
+This stage imports the checked-in catalog photos into the existing `photos`
+container and exports a verified manifest. Run manually **after** Terraform apply.
+The target can be `private` or use blob-only anonymous reads; the importer checks
+actual access against Terraform and keeps uploads authenticated. It does not
+provision infrastructure, change the database or deploy an application. See
+[ACA deployment](aca-deployment.md) to change read access without changing URLs
+or reuploading photos.
 
 ## Source layout and mapping
 
@@ -62,13 +68,16 @@ $manifest.products | Select-Object product_id, product_name, mainPhoto, catalog_
 The manifest includes:
 
 - Schema version, generation timestamp and pinned Products source commit.
-- Subscription, application group, storage account, container and private access mode.
+- Subscription, application group, storage account, container and applied access mode.
 - Upload/skip counts and one record per product.
 - Product UUID/name, source folder and review notes.
 - `mainPhoto` and three `otherPhotos` canonical URLs.
 - Four photo records containing blob names, encoded URLs, source paths, hashes, sizes and MIME types.
 
-Canonical URLs identify private objects; they do not authorize anonymous browser access. The later API/BFF or short-lived signed-URL delivery step must provide access. Do not store expiring SAS tokens in SQL seed data. Do not commit environment-specific generated manifests; the mapping and original images are the versioned inputs.
+Canonical URLs require authorization while access is `private`. With Terraform's
+anonymous-read flag enabled, `blob` access allows those same photo URLs directly
+without a login or SAS. Anonymous listing and writes remain unavailable. Do not
+store expiring SAS tokens in SQL seeds or commit environment-specific manifests.
 
 ## Windows Unicode handling
 
@@ -96,7 +105,7 @@ If all 60 blobs already match, expect **uploaded 0; skipped 60**. A failed first
 
 ## Validation performed
 
-All **26 offline checks** pass using PowerShell 7.5.3. They exercise the actual 60-image collection and native-command-shaped fake responses, repeat imports, single-image changes, URL encoding, role ordering, legacy/MIME repair, target checks, partial failure, failed verification, concurrent writes and manifest preservation. An additional native child process emits UTF-8 JSON containing `Biały` while the caller uses Windows code page 1250; the original importer reproduces the reported verification failure, and the corrected importer verifies and skips those blobs on repeat. Encoding restoration is checked on success and failure. Azure CLI response shapes, Base64 MD5 handling and list options were checked against the official Azure CLI source.
+All **28 offline checks** pass using PowerShell 7.6.7, including declared blob-only public access and idempotent repeats. They exercise the actual 60-image collection and native-command-shaped fake responses, repeat imports, single-image changes, URL encoding, role ordering, legacy/MIME repair, target checks, partial failure, failed verification, concurrent writes and manifest preservation. An additional native child process emits UTF-8 JSON containing `Biały` while the caller uses Windows code page 1250; the original importer reproduces the reported verification failure, and the corrected importer verifies and skips those blobs on repeat. Encoding restoration is checked on success and failure. Azure CLI response shapes, Base64 MD5 handling and list options were checked against the official Azure CLI source.
 
 The operator's Windows run reported successful upload calls for all 60 images, followed by a Unicode-name verification failure. The correction has been checked offline; a live operator retry is still required to confirm the actual Windows Azure CLI installation and Azure data path. The Terraform resources and provider lock are unchanged by this stage.
 
