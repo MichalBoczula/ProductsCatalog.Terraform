@@ -40,5 +40,5 @@ resource "azurerm_container_app_environment" "products" {
 
   # Azure owns the managed networking group and its IP/load-balancer resources.
   # Streamed logs are sufficient for this first step; no Log Analytics workspace.
-  # The Products Container App and its SQL egress rules are added after migrations.
+  # Products rollout and its SQL egress rules are managed in products.tf.
 }

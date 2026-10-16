@@ -7,3 +7,11 @@ sql_location = "francecentral"
 # operator_ipv4 = "203.0.113.10" # Example address; replace with your public IPv4.
 
 # subscription_id, operator_object_id and sql_admin_password come from TF_VAR_*.
+
+# Keep foundation-only defaults unless following docs/aca-deployment.md.
+# photos_anonymous_read_enabled = true
+# deploy_products_app           = true
+# products_image                = "mb0101/product-catalog-api:<published-full-40-character-commit>"
+# products_deployment_stage     = "prepare"
+# products_apply_migrations     = false
+# products_external_ingress_enabled = false

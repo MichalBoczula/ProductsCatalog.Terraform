@@ -50,7 +50,7 @@ function global:Invoke-PhotoTestAzure {
     Assert-Check ((Get-TestArgument $Arguments '--subscription') -ceq $state.foundation.subscription_id) 'Wrong data-plane subscription.'
     if ($operation -eq 'storage container show') {
         if ($state.mode -eq 'ContainerDenied') { $global:LASTEXITCODE = 4; return '403' }
-        $access = if ($state.mode -eq 'PublicContainer') { 'blob' } else { $null }
+        $access = if ($state.mode -eq 'PublicContainer') { 'blob' } elseif ($state.mode -eq 'ContainerListing') { 'container' } elseif ($state.foundation.photos_access -eq 'blob') { 'blob' } else { $null }
         return @{ name = 'photos'; properties = @{ publicAccess = $access } } | ConvertTo-Json -Compress
     }
     if ($operation -eq 'storage blob list') {
@@ -250,7 +250,8 @@ try {
         @('MissingStorage', 'Checking the provisioned Products storage account failed'),
         @('WrongEndpoint', 'storage endpoint differs'),
         @('ContainerDenied', 'Checking photo container access failed'),
-        @('PublicContainer', 'allows anonymous'),
+        @('PublicContainer', 'access differs'),
+        @('ContainerListing', 'access differs'),
         @('ListFailure', 'Listing photo blobs failed'),
         @('CreationRace', 'Uploading .* failed'),
         @('ChangedDuringImport', 'Image changed during import')
@@ -280,6 +281,15 @@ try {
         $global:PhotoImportTestState.mode = 'ReplacementRace'
         Assert-ImportFailure $options 'Uploading .* failed'
         Assert-Check ((Get-Content $options.ManifestPath -Raw) -ceq $previous) 'A concurrent replacement must preserve the previous manifest.'
+    }
+    Invoke-Check 'blob-only public access preserves idempotent authenticated uploads' {
+        $options = New-TestFixture 'public-photos'
+        Invoke-TestImport $options | Out-Null
+        $global:PhotoImportTestState.foundation.photos_access = 'blob'
+        $result = Invoke-TestImport $options
+        Assert-Check ($result.uploaded -eq 0 -and $result.skipped -eq 8) 'Changing read access must not reupload unchanged photos.'
+        $manifest = Get-Content $options.ManifestPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
+        Assert-Check ($manifest.photos_access -ceq 'blob') 'The manifest must record the applied access mode.'
     }
     Invoke-Check 'existing legacy blob is repaired' {
         $options = New-TestFixture 'legacy'

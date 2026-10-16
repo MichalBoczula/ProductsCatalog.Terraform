@@ -69,6 +69,22 @@ override_resource {
 }
 
 override_resource {
+  target          = azurerm_container_app_environment.products
+  override_during = plan
+  values = {
+    id = "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-ecommercestore-products-dev/providers/Microsoft.App/managedEnvironments/cae-ecommercestore-products-dev"
+  }
+}
+
+override_resource {
+  target          = azurerm_key_vault_secret.products_sql
+  override_during = plan
+  values = {
+    id = "https://kv-ecp-dev-demo01.vault.azure.net/secrets/products-sql-connection/0123456789abcdef0123456789abcdef"
+  }
+}
+
+override_resource {
   target          = azurerm_mssql_server.products
   override_during = plan
   values = {
@@ -188,5 +204,85 @@ run "local_migration_access" {
       azurerm_mssql_firewall_rule.operator[0].end_ip_address == "203.0.113.10"
     )
     error_message = "Local SQL access must allow only the explicitly supplied IPv4."
+  }
+}
+
+run "anonymous_photo_reads" {
+  command = plan
+  variables {
+    photos_anonymous_read_enabled = true
+  }
+  assert {
+    condition = (
+      azurerm_storage_account.photos.allow_nested_items_to_be_public &&
+      !azurerm_storage_account.photos.shared_access_key_enabled &&
+      azurerm_storage_container.photos.container_access_type == "blob" &&
+      output.products_foundation.photos_access == "blob"
+    )
+    error_message = "Anonymous photos must use blob-only reads and keep Shared Key disabled."
+  }
+}
+
+run "prepare_without_sql" {
+  command = plan
+  variables {
+    deploy_products_app = true
+    products_image      = "mb0101/product-catalog-api:0123456789abcdef0123456789abcdef01234567"
+  }
+  assert {
+    condition = (
+      length(azurerm_container_app.products) == 1 &&
+      length(azurerm_mssql_firewall_rule.products_aca) == 0 &&
+      !azurerm_container_app.products[0].ingress[0].external_enabled &&
+      azurerm_container_app.products[0].template[0].container[0].readiness_probe[0].path == "/health/live" &&
+      one([for env in azurerm_container_app.products[0].template[0].container[0].env : env.value if env.name == "Database__ApplyMigrations"]) == "false"
+    )
+    error_message = "Prepare must start privately without SQL readiness, migrations, or unknown firewall instance keys."
+  }
+}
+
+run "serve_with_exact_sql_rules" {
+  command = plan
+  variables {
+    deploy_products_app       = true
+    products_deployment_stage = "serve"
+    products_apply_migrations = true
+    products_image            = "mb0101/product-catalog-api:0123456789abcdef0123456789abcdef01234567"
+    products_sql_egress_ipv4 = {
+      egress01 = "203.0.113.10"
+      egress02 = "198.51.100.20"
+    }
+  }
+  assert {
+    condition = (
+      length(azurerm_mssql_firewall_rule.products_aca) == 2 &&
+      azurerm_mssql_firewall_rule.products_aca["egress01"].start_ip_address == "203.0.113.10" &&
+      azurerm_mssql_firewall_rule.products_aca["egress01"].end_ip_address == "203.0.113.10" &&
+      azurerm_container_app.products[0].template[0].container[0].readiness_probe[0].path == "/health/ready" &&
+      one([for env in azurerm_container_app.products[0].template[0].container[0].env : env.value if env.name == "Database__ApplyMigrations"]) == "true" &&
+      one(azurerm_container_app.products[0].secret).key_vault_secret_id == azurerm_key_vault_secret.products_sql.id &&
+      one(azurerm_container_app.products[0].secret).identity == azurerm_user_assigned_identity.products.id &&
+      azurerm_container_app.products[0].template[0].min_replicas == 0 &&
+      azurerm_container_app.products[0].template[0].max_replicas == 1
+    )
+    error_message = "Serve must use exact SQL addresses, identity-based Key Vault configuration, SQL readiness and bounded Consumption scaling."
+  }
+}
+
+run "operator_only_external_test" {
+  command = plan
+  variables {
+    deploy_products_app               = true
+    products_image                    = "mb0101/product-catalog-api@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    products_external_ingress_enabled = true
+    operator_ipv4                     = "203.0.113.10"
+  }
+  assert {
+    condition = (
+      azurerm_container_app.products[0].ingress[0].external_enabled &&
+      one(azurerm_container_app.products[0].ingress[0].ip_security_restriction).ip_address_range == "203.0.113.10/32" &&
+      one(azurerm_container_app.products[0].ingress[0].ip_security_restriction).action == "Allow"
+    )
+    error_message = "External testing must allow only the explicit operator address."
   }
 }

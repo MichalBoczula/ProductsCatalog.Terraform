@@ -14,6 +14,7 @@ override.tf.json
 photo-manifest*.json
 .photo-manifest-*.tmp
 foundation-output*.json
+.products-egress-*.tmp
 
 !terraform.tfvars.example
 !backend.hcl.example
