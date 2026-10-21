@@ -11,14 +11,22 @@ override_data {
 }
 
 variables {
-  subscription_id    = "11111111-1111-1111-1111-111111111111"
-  operator_object_id = "33333333-3333-3333-3333-333333333333"
-  sql_admin_password = "TestOnly-Sql-123456!"
-  name_suffix        = "demo01"
-  environment        = "dev"
-  location           = "northeurope"
-  sql_location       = "francecentral"
-  operator_ipv4      = null
+  subscription_id                   = "11111111-1111-1111-1111-111111111111"
+  operator_object_id                = "33333333-3333-3333-3333-333333333333"
+  sql_admin_password                = "TestOnly-Sql-123456!"
+  name_suffix                       = "demo01"
+  environment                       = "dev"
+  location                          = "northeurope"
+  sql_location                      = "francecentral"
+  operator_ipv4                     = null
+  products_api_operator_ipv4        = null
+  photos_anonymous_read_enabled     = false
+  deploy_products_app               = false
+  products_image                    = null
+  products_deployment_stage         = "prepare"
+  products_sql_egress_ipv4          = {}
+  products_apply_migrations         = false
+  products_external_ingress_enabled = false
 }
 
 run "maximum_length_names" {
@@ -143,4 +151,22 @@ run "reject_external_api_without_operator" {
   command = plan
   variables { products_external_ingress_enabled = true }
   expect_failures = [var.products_external_ingress_enabled]
+}
+
+run "reject_azure_wide_api_address" {
+  command = plan
+  variables { products_api_operator_ipv4 = "0.0.0.0" }
+  expect_failures = [var.products_api_operator_ipv4]
+}
+
+run "reject_private_api_address" {
+  command = plan
+  variables { products_api_operator_ipv4 = "192.168.1.1" }
+  expect_failures = [var.products_api_operator_ipv4]
+}
+
+run "reject_api_cidr_address" {
+  command = plan
+  variables { products_api_operator_ipv4 = "203.0.113.10/24" }
+  expect_failures = [var.products_api_operator_ipv4]
 }

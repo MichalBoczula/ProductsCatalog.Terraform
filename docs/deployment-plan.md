@@ -10,6 +10,12 @@ Work through one stage at a time. Provisioning and application deployment remain
 
 After Products works, add BFF and frontend in their own steps. The Docker image stays on Docker Hub; the foundation does not introduce another registry. This root creates only Products resources. The former whole-store foundation continues to own any resources already in its state.
 
+The manual scripts now encode these stages with separate Plan and Apply actions.
+Keep `products-deployment.tfvars.json` across sessions; it retains the immutable
+image and exact ACA SQL rules. Use the Internal step after browser verification
+to remove temporary personal-IP access. API and local SQL IP inputs are separate;
+the existing operator-IP fallback remains compatible.
+
 ## State and ownership
 
 Use the existing independently managed Terraform state storage account and `tfstate` container, but a different blob: `products/development.terraform.tfstate`. Never initialize this root against `development.terraform.tfstate`, which belongs to the whole-store root. The state account/container are not managed here.

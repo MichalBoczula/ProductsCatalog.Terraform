@@ -1,34 +1,58 @@
 # Terraform and deployment validation
 
-## Reproducible checks
+## CI checks
 
-The GitHub `Terraform checks` workflow uses Terraform 1.16.5 and the checked-in
+The GitHub `Terraform checks` workflow uses Terraform 1.16.5 and the committed
 AzureRM 5.8.0 / AzAPI 2.13.0 lock file. It runs backend-disabled initialization,
-formatting, full provider schema validation, 24 mocked plan tests, and both
-PowerShell test scripts. It has no Azure credentials and never applies real resources.
+formatting, full provider schema validation, 29 mocked Terraform plans, and the
+photo importer/SQL egress offline checks. It has no Azure credentials and never
+applies real resources.
 
-The Terraform suite covers foundation/naming, private and blob-only anonymous
-photo access, prepare/serve behavior, exact SQL rules, identity-based Key Vault
-references, bounded Consumption scaling, operator-only external testing, and
-rejected image/network/stage inputs.
+Mocked test baselines explicitly set all inputs. CI creates conflicting local
+auto inputs to verify that a developer's rollout file cannot turn on external
+ingress, require their personal IP or break the input rejection scenarios.
+Tests cover the legacy operator-IP fallback and API-only access with no laptop
+SQL firewall rule, as well as separate API and SQL operator addresses.
 
-## Local preparation checks
+A separate Linux/Windows matrix parses all PowerShell scripts and runs 21 offline
+manual deployment checks using fake Terraform, Azure CLI and HTTP commands.
+They check that plans never apply, failed egress lookup preserves inputs,
+Foundation cannot remove an existing app, pending migrations cannot be disabled,
+Internal retains ACA SQL access while clearing personal IPs, changed inputs/backend
+or plan bytes invalidate a saved plan, failed planning invalidates an older
+receipt, and successful Apply consumes it. Destroy retains complete inputs.
+The verifier rejects missing seeds, denied readiness and inaccessible photos;
+lifecycle/session checks preserve inputs and the existing SQL password.
 
-- Backend-disabled initialization installs the pinned providers successfully.
-- Terraform formatting and `git diff --check` pass.
-- A provider-free harness using copies of the actual `variables.tf`, `locals.tf`,
-  and input run blocks passes all 18 input checks.
-- PowerShell 7.6.7 passes 28 offline importer checks, including all 60 source
-  photos, Unicode native output, public-read compatibility and repeat imports.
-- The egress helper passes 12 offline checks, including stable deduplicated keys,
-  invalid/empty outputs and preserving the previous input on errors.
-- Full local provider schema/test execution is blocked by the preparation
-  runtime's provider plugin handshake/socket restriction. The provider-free
-  checks do not replace the full mocked suite; GitHub runs it with real plugins.
+## Local checks
 
-## Verify during manual Azure rollout
+Use a separate checkout for backend-disabled provider checks so an initialized
+Azure deployment backend remains intact:
 
-The operator must verify the existing backend/state key, unchanged resource
-ownership, RBAC propagation, the published image tag, actual app egress, SQL
-readiness and anonymous photo HTTP responses. Review every saved plan before
-applying it. No Azure resources were provisioned while preparing these files.
+```powershell
+& $ecommerceTerraform init '-backend=false' '-input=false' '-lockfile=readonly'
+if ($LASTEXITCODE -ne 0) { throw 'Provider initialization failed' }
+& $ecommerceTerraform fmt '-check' '-recursive'
+if ($LASTEXITCODE -ne 0) { throw 'Formatting failed' }
+& $ecommerceTerraform validate
+if ($LASTEXITCODE -ne 0) { throw 'Schema validation failed' }
+& $ecommerceTerraform test '-no-color'
+if ($LASTEXITCODE -ne 0) { throw 'Mocked Terraform tests failed' }
+
+pwsh -NoProfile -File .\tests\Test-ImportProductPhotos.ps1
+pwsh -NoProfile -File .\tests\Test-ProductsSqlEgress.ps1
+pwsh -NoProfile -File .\tests\Test-ManualProductsDeployment.ps1
+```
+
+The importer checks all 60 source photos, repeat imports, Unicode command output,
+public-read compatibility and manifest preservation. The egress helper checks
+stable deduplication and rejects invalid/empty outputs without overwriting its
+previous result. These scripts do not contact Azure or upload photos.
+
+## Manual Azure verification
+
+The operator verifies the intended backend/state key, resource ownership, RBAC,
+immutable image, actual outbound addresses, latest ready revision, live SQL
+readiness, 15 seeded phones and an anonymous photo request. InfrastructureOnly
+checks Azure configuration; it does not claim to verify the live API/database.
+See [the manual guide](aca-deployment.md) for exact commands and teardown order.

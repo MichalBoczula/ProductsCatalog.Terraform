@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfplan
+*.tfplan.metadata.json
 *.tfvars
 *.tfvars.json
 backend.hcl
@@ -15,6 +16,8 @@ photo-manifest*.json
 .photo-manifest-*.tmp
 foundation-output*.json
 .products-egress-*.tmp
+.products-plans/
+.products-input-*.tmp
 
 !terraform.tfvars.example
 !backend.hcl.example

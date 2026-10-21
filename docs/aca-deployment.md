@@ -1,196 +1,302 @@
-# Deploy Products to ACA and serve public photos
+# Manual Products deployment
 
-This continues the existing Products environment and state. Run locally from
-`ProductsCatalog.Terraform` with PowerShell 7.2+, Terraform 1.16.5 and Azure CLI.
-Do not copy the example backend/tfvars files over your working files again.
-Keep `stecomtfstatemb261011`, container `tfstate`, and key
-`products/development.terraform.tfstate`. Keep the existing suffix and SQL password.
-The state account is outside this root and remains private.
+Run from `ProductsCatalog.Terraform` using PowerShell 7.2+, Terraform 1.16.5 and Azure CLI.
+The scripts do not run from GitHub Actions and do not automatically apply plans.
+The existing state account/container stay outside this root's ownership.
 
-## 1. Publish the application image
+## Continue an already working environment
 
-Merge the Products API change [PR #198](https://github.com/MichalBoczula/ProductsCatalog/pull/198)
-and wait for its **master push** CI run to finish the scanned Docker Hub publish.
-PR CI validates images but does not publish them. The image repository is
-`mb0101/product-catalog-api`; use the full master commit SHA tag from that run,
-or its recorded sha256 digest. Do not use `latest` or the PR's head SHA tag.
-ACA pulls the public image; Docker Hub credentials stored in GitHub are used
-for the CI push, not automatically supplied to Azure.
+Keep the existing `backend.hcl`, `terraform.tfvars` and
+`products-deployment.tfvars.json`. That last file retains the image, deployment
+stage, photo access and exact ACA-to-SQL firewall addresses. Do not replace it
+with foundation defaults. Every deployment script passes it explicitly.
 
-The API image must contain the Blob seed URLs and list `mainPhoto` change.
-No image files are embedded into Terraform state or the API image.
-
-## 2. Prepare local rollout inputs
-
-Pull this Terraform change. Restore the same Azure CLI subscription and
-`TF_VAR_subscription_id`, `TF_VAR_operator_object_id`, and
-`TF_VAR_sql_admin_password` values used to provision the environment. Use the
-original SQL password; changing it would plan a password/connection-secret rotation.
-Keep your existing `$ecommerceTerraform` executable path.
-
-Create a separate ignored rollout file. Run this initial creation once; later
-steps update this file rather than overwriting backend or foundation inputs.
+Restore the shell session. The initializer retains an existing SQL password in
+`TF_VAR_sql_admin_password`; otherwise it prompts without displaying the value.
+Enter the original password. A different password plans a SQL/Key Vault rotation.
+It reuses the operator UUID in `TF_VAR_operator_object_id`, or looks up the signed-in
+human user. Pass `-OperatorObjectId` explicitly when restoring a different shell/account.
 
 ```powershell
-$productsImageCommit = Read-Host 'Published master image commit (full 40-character SHA)'
-if ($productsImageCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Use the full published master commit SHA' }
-if (Test-Path .\products-rollout.auto.tfvars.json) { throw 'Rollout file already exists; edit it instead of recreating it' }
-@{
-    photos_anonymous_read_enabled    = $true
-    deploy_products_app              = $true
-    products_image                   = "mb0101/product-catalog-api:$productsImageCommit"
-    products_deployment_stage        = 'prepare'
-    products_apply_migrations        = $false
-    products_external_ingress_enabled = $false
-} | ConvertTo-Json | Set-Content .\products-rollout.auto.tfvars.json -Encoding utf8
-
-& $ecommerceTerraform init '-backend-config=backend.hcl'
-if ($LASTEXITCODE -ne 0) { throw 'Initialization failed' }
-& $ecommerceTerraform fmt '-check' '-recursive'
-if ($LASTEXITCODE -ne 0) { throw 'Formatting failed' }
-& $ecommerceTerraform validate
-if ($LASTEXITCODE -ne 0) { throw 'Validation failed' }
-& $ecommerceTerraform test
-if ($LASTEXITCODE -ne 0) { throw 'Mocked tests failed' }
+$session = .\scripts\Initialize-ProductsSession.ps1 `
+    -SubscriptionId 'fcbf086b-8ce4-4ca5-a3d7-0c56489e25f6'
+$ecommerceTerraform = $session.terraform_path
 ```
 
-Photos use `blob` access: anyone with a photo URL can read it, while anonymous
-container listing and writes remain unavailable. Storage Shared Key stays
-disabled; uploads still use your Entra identity. Existing canonical URLs and
-uploaded photos stay unchanged, so changing access needs no reimport or seed edit.
-
-The API is internal to the ACA environment by default, ready for the later BFF.
-For a temporary local Swagger/HTTP test, set
-`products_external_ingress_enabled` to `true` in the rollout file and provide
-your current public IPv4 through the existing `operator_ipv4` input. External
-ingress is restricted to that address's `/32`; the unauthenticated write API is
-not opened to everyone. This also retains the existing operator SQL rule until
-you remove `operator_ipv4` after testing.
-
-## 3. Review and apply prepare
+After the API and photos have been verified, remove temporary personal-IP access:
 
 ```powershell
-& $ecommerceTerraform plan '-input=false' '-out=products-prepare.tfplan'
-if ($LASTEXITCODE -ne 0) { throw 'Prepare planning failed' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Internal
 ```
 
-Review the saved plan before running the next block. For an unchanged existing
-foundation, preparation adds the Container App and updates photo account/container
-access in place. It must not replace the VNet, ACA environment, SQL database,
-storage account, or delete resources. Preserve any existing backend/state and
-resolve unexpected changes before applying.
+Review the plan. Expect internal app ingress and removal of the old personal-IP
+SQL rule when present. Keep the existing ACA SQL egress rules, image, database,
+photos and identity. Apply separately:
 
 ```powershell
-& $ecommerceTerraform apply products-prepare.tfplan
-if ($LASTEXITCODE -ne 0) { throw 'Prepare failed; retain state and inspect the error' }
-& $ecommerceTerraform output -json products_deployment
-if ($LASTEXITCODE -ne 0) { throw 'Deployment output lookup failed' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Internal -Action Apply
+.\scripts\Test-ProductsDeployment.ps1 -InfrastructureOnly
 ```
 
-Prepare starts the real pinned API image on port 8080 with migrations disabled.
-Both startup and readiness use `/health/live` during this stage, allowing Azure
-to start the app before SQL access exists. This is networking preparation, not
-the completed database-ready rollout. The managed identity resolves the SQL
-connection secret from Key Vault; no connection string is copied into CLI output
-or the rollout input file.
+`InfrastructureOnly` verifies Azure configuration and revision selection. It does
+not claim to make a live API request or verify database connectivity.
+The BFF can subsequently call Products inside the same ACA environment.
 
-## 4. Record exact SQL egress and review serve
+## First deployment from a fresh clone
 
-```powershell
-.\scripts\Set-ProductsSqlEgress.ps1 -TerraformPath $ecommerceTerraform
-$rollout = Get-Content .\products-rollout.auto.tfvars.json -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable
-$rollout.products_deployment_stage = 'serve'
-$rollout.products_apply_migrations = $true
-$rollout | ConvertTo-Json | Set-Content .\products-rollout.auto.tfvars.json -Encoding utf8
-
-& $ecommerceTerraform plan '-input=false' '-out=products-serve.tfplan'
-if ($LASTEXITCODE -ne 0) { throw 'Serve planning failed' }
-```
-
-The helper reads the applied app's `outbound_ip_addresses` and writes an ignored
-`products-egress.auto.tfvars.json` with stable map keys and exact IPv4 values.
-Review that file and the plan. Expect one SQL firewall rule per unique outbound
-address and an app revision update. No Azure-wide `0.0.0.0` rule, IP range,
-inbound-IP substitution, or apply-time `for_each` is used.
-
-This environment and SQL are in different regions, so this rollout retains
-the public SQL endpoint with exact firewall rules. It does not move SQL, add
-a paid NAT gateway/private endpoint, or change the SQL Free offer.
-
-Once the plan is correct, apply separately:
+Prepare local files once. Existing files are preserved:
 
 ```powershell
-& $ecommerceTerraform apply products-serve.tfplan
-if ($LASTEXITCODE -ne 0) { throw 'Serve failed; retain state and inspect the error' }
-$deployment = (& $ecommerceTerraform output -json products_deployment) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw 'Deployment output lookup failed' }
-$deployment = $deployment | ConvertFrom-Json
-
-az containerapp show --resource-group $deployment.resource_group_name --name $deployment.name `
-    --query '{state:properties.provisioningState,revision:properties.latestReadyRevisionName,image:properties.template.containers[0].image,egress:properties.outboundIpAddresses}' --output json
-if ($LASTEXITCODE -ne 0) { throw 'Container App verification failed' }
-```
-
-Serve waits for the SQL rules before deploying the revision. Readiness now uses
-`/health/ready`; liveness remains independent of SQL. Startup migrations are
-enabled only for this disposable database bootstrap. The app uses Consumption,
-0.25 vCPU/0.5 GiB, a single revision, and zero to one replicas.
-
-## 5. Verify API and anonymous images
-
-With internal ingress, verify the ready revision and later call the API through
-the BFF in the same ACA environment. With the optional operator-only external
-test enabled, run locally from the allowed public IPv4:
-
-```powershell
-$baseUrl = $deployment.base_url
-$ready = $false
-for ($attempt = 0; $attempt -lt 12; $attempt++) {
-    try {
-        $response = Invoke-WebRequest "$baseUrl/health/ready" -TimeoutSec 20
-        if ($response.StatusCode -eq 200) { $ready = $true; break }
-    } catch { }
-    Start-Sleep -Seconds 10
+if (-not (Test-Path .\terraform.tfvars)) {
+    Copy-Item .\terraform.tfvars.example .\terraform.tfvars
 }
-if (-not $ready) { throw 'SQL readiness did not become healthy; inspect ACA logs and exact egress rules' }
-$phones = @(Invoke-RestMethod "$baseUrl/mobile-phones?amount=15" -TimeoutSec 30)
-if ($phones.Count -ne 15 -or @($phones | Where-Object { [string]::IsNullOrWhiteSpace($_.mainPhoto) }).Count -gt 0) {
-    throw 'Expected 15 seeded phones with mainPhoto URLs'
+if (-not (Test-Path .\backend.hcl)) {
+    @'
+storage_account_name = "stecomtfstatemb261011"
+container_name       = "tfstate"
+key                  = "products/development.terraform.tfstate"
+'@ | Set-Content .\backend.hcl -Encoding utf8
 }
-# No Authorization header or SAS token: this is an anonymous photo request.
-$photo = Invoke-WebRequest $phones[0].mainPhoto -Method Head -TimeoutSec 30
-if ($photo.StatusCode -ne 200 -or [string]$photo.Headers['Content-Type'] -notlike 'image/*') { throw 'Anonymous photo verification failed' }
 ```
 
-Anonymous photo access can also be tested independently of API ingress by opening
-an existing manifest `mainPhoto` URL in a private browser window. Do not test
-account keys, SAS links, or a signed-in Storage Explorer session as anonymous access.
+Check `terraform.tfvars` before the first apply: `name_suffix` must stay stable
+for this state. The deployed photo seed uses `mb261013`. Keep North Europe for
+ACA and France Central for this subscription's SQL Free offer. Other environments
+need a separate state key. The initializer rejects an unedited backend placeholder;
+it never migrates or reconfigures a backend automatically.
 
-Cold ACA/SQL starts can take time. SQL can also pause at its Free monthly limit;
-that setting is preserved. If Azure changes the app's outbound IPs, refresh the
-Terraform state with a reviewed refresh-only plan/apply, rerun the helper, review
-the exact rule changes, and apply before verifying readiness again.
+Initialize the session using the command above. For a new SQL server choose a
+strong password once and keep it securely for later sessions and destroy plans.
+The initializer runs `init` and `validate`, not `apply`.
 
-## 6. Finish the bootstrap
+### 1. Foundation
 
-After verifying the database and photos, set `products_apply_migrations` back
-to `false`. If you enabled temporary external ingress, set it back to `false`
-and remove `operator_ipv4` when local SQL access is no longer needed. Review and
-apply a new plan; do not reuse either saved plan above. Keep
-`deploy_products_app=true`, the immutable image reference, the photo read flag,
-and both ignored rollout/egress files for subsequent plans and destroy operations.
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Foundation
+```
 
-Future retained deployments should run migrations as a deployment step and use
-a restricted SQL database identity. BFF, Angular hosting, and deployment automation
-remain separate steps.
+Review the 15 foundation additions. This script opts into anonymous individual
+photo reads for the portfolio; shared keys, anonymous writes and anonymous listing
+remain disabled. A fresh foundation has no Container App or laptop SQL rule.
+`Foundation` rejects an already enabled app in either the inputs or remote state.
 
-## Checks without Azure provisioning
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Foundation -Action Apply
+```
+
+If Azure returns a provisioning timeout, retain the state and input file. Inspect
+the Azure resource and create a fresh Foundation plan; do not delete state or
+reuse a stale saved plan. A partial apply can already have created resources.
+
+### 2. Import photos
+
+The existing importer remains separate from Terraform apply:
+
+```powershell
+.\scripts\Import-ProductPhotos.ps1 -ValidateOnly
+.\scripts\Import-ProductPhotos.ps1 -TerraformPath $ecommerceTerraform
+```
+
+Expect 15 models, 60 verified photos, and `photo-manifest.json`. Repeating the
+import skips unchanged photos. See [the import guide](photo-import.md).
+
+### 3. Prepare the app
+
+Use a successfully published image digest or full master commit tag. PR-only
+builds do not publish an image. The image must contain the Blob seed URLs and
+`mainPhoto` API change. The initial tested image is
+`mb0101/product-catalog-api@sha256:dd92571adbbe889faacca4c0a72b4296a64e234c0ca9d57c9cf85b08bbd054d8`;
+update it deliberately after a successful publish.
+
+```powershell
+$productsImage = Read-Host 'Published immutable Products image reference'
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Prepare -Image $productsImage
+```
+
+Review one app addition. Prepare uses internal ingress, port 8080, migrations
+`false`, and `/health/live` for startup/readiness. It starts before SQL access
+exists. Apply separately:
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Prepare -Action Apply
+.\scripts\Test-ProductsDeployment.ps1 -InfrastructureOnly
+```
+
+### 4. Serve and bootstrap SQL
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Serve
+```
+
+Serve calls `Set-ProductsSqlEgress.ps1` using the actual applied app outputs. Its
+temporary output is nested under `.products-plans/`, so Terraform does not
+automatically load it. The reviewed exact IP map is copied into the retained
+`products-deployment.tfvars.json`; a previous empty map cannot override it.
+
+Review one SQL rule per unique outbound IP plus the app update. No Azure-wide
+`0.0.0.0` rule, inbound-IP substitution, NAT gateway or private endpoint is added.
+The app revision waits for the SQL rules. Startup migrations are enabled for this
+initial disposable database, and readiness switches to `/health/ready`.
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Serve -Action Apply
+.\scripts\Test-ProductsDeployment.ps1 -InfrastructureOnly
+```
+
+A ready revision and `/health/ready` check the SQL schema; a ready `prepare`
+revision checks only the process. During a rollout, the previous revision can
+remain ready until the new one passes its probes. Inspect the latest revision's
+logs if its name differs from the ready revision. SQL auto-resume can take time.
+
+### 5. Test Swagger, the seeded phones and photos
+
+```powershell
+$productsApiIpv4 = Read-Host 'Current public IPv4 for temporary API access'
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Swagger -ApiOperatorIpv4 $productsApiIpv4
+```
+
+Review the temporary `/32` API allowlist and removal of any old laptop SQL rule.
+This exposes Swagger and the API only to that source IP. It does not publish only
+Swagger: the same allowed client can reach the application's write endpoints.
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Swagger -Action Apply
+.\scripts\Test-ProductsDeployment.ps1
+```
+
+The verifier reads the current FQDN from Azure, waits for `/health/ready`, checks
+15 phones with nonempty `mainPhoto`, and makes a fresh anonymous HEAD request to
+one returned photo. No SAS, credential or Authorization header is supplied.
+Its output includes the current Swagger URL. Opening an old internal URL can
+return Azure's 404 page even while the app is healthy. A 401/403 stops the verifier
+immediately for an access-rule check rather than waiting through cold-start retries.
+
+### 6. Finish the bootstrap
+
+The Swagger step already disables startup migrations after the Serve revision
+has completed them. Both Swagger and Runtime first require the applied Serve
+revision to match Azure's ready revision; an older healthy Prepare revision is
+not accepted as evidence that migrations completed. Runtime is the explicit migration-free deployment step and
+also accepts a new immutable `-Image` for a future code rollout:
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Runtime
+```
+
+Review, then apply separately:
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Runtime -Action Apply
+.\scripts\Test-ProductsDeployment.ps1
+```
+
+Close direct API access with the Internal plan/apply commands at the beginning of
+this guide. Then deploy BFF and Angular separately. A retained environment should
+use a restricted database identity and a separate migration deployment step.
+
+## Personal IP versus ACA egress
+
+| Input | Purpose | After testing |
+| --- | --- | --- |
+| `products_api_operator_ipv4` | Temporary `/32` browser/API allowlist | Set null and disable external ingress |
+| `operator_ipv4` | Optional direct SQL access from a laptop | Set null when local SQL access is finished |
+| `products_sql_egress_ipv4` | Exact ACA outbound addresses permitted into SQL | Keep while Products runs |
+
+The new Swagger step uses API-only access and clears `operator_ipv4`. Existing
+configurations that use `operator_ipv4` for external API access keep working as
+a compatibility fallback. No actual personal IP is committed to this repository;
+local `*.tfvars*` files are ignored. `Internal` clears both personal-IP inputs,
+disables external ingress and retains the current migration setting and ACA SQL
+rules. Use Runtime to disable migrations after the Serve revision is ready.
+
+## Saved plans and failure recovery
+
+Each Plan action creates `.products-plans/products-<step>.tfplan` and a receipt
+binding it to the selected step, inputs, Terraform configuration and initialized
+backend. Apply does not create a new plan and refuses a changed/missing receipt,
+modified binary or changed configuration. Successful apply consumes the receipt.
+The binary remains available for diagnosis; Terraform also rejects stale state.
+
+Review the plan before running Apply. If a command fails, retain state and
+configuration and make a new reviewed plan after resolving the error. The scripts
+never run `state rm`, force-unlock, delete a resource group, reset a backend, or
+rotate a password automatically. Saved Terraform plans contain sensitive values;
+the plan directory, receipts, inputs and generated manifests are ignored by Git.
+Use the same `-InputsPath`, `-PlanPath` and `-TerraformDirectory` on both actions
+when overriding defaults. InputsPath must be a non-auto `.tfvars.json` file.
+
+If using the older root auto files, first merge all active rollout fields and the
+actual egress map into `products-deployment.tfvars.json`. Rename the old files to
+non-auto `*.saved.tfvars.json` names after checking their values. Do not combine
+a foundation file that disables the app with a deployment file.
+
+If Azure's outbound addresses change, review/apply a refresh-only plan with the
+retained deployment inputs, then create a new Serve plan to recapture the map.
+Set migrations back to false using Runtime after the rollout. Do not substitute
+a VNet inbound IP or a broad SQL rule.
+
+## Stop and resume between portfolio sessions
+
+Products remains configured for zero to one replicas. `min: null` in an Azure CLI
+response means no explicit minimum is returned; the platform default is zero.
+Normal HTTP autoscaling can wake the app again on the next request.
+
+To keep it off manually, without editing Terraform inputs:
+
+```powershell
+.\scripts\Set-ProductsAppState.ps1 -State Stop
+```
+
+Before API or BFF testing:
+
+```powershell
+.\scripts\Set-ProductsAppState.ps1 -State Start
+```
+
+The lifecycle script waits for the Azure running status. A manually stopped app
+needs Start; HTTP requests do not wake it. CPU/memory use stops at zero replicas,
+but SQL/storage and the ACA-managed load balancer/public IPs remain provisioned.
+This is not a zero-cost shutdown of the whole environment.
+
+## Destroy after the portfolio session
+
+Remove/unlink Angular hosting first, then BFF, then Products and its shared ACA
+environment. Restore the original local session and retain the deployment inputs.
+Products destruction deletes SQL, imported photos and its disposable Key Vault;
+the independently managed state account is retained.
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Destroy
+```
+
+Review the full deletion list before applying:
+
+```powershell
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Destroy -Action Apply
+```
+
+For an Azure deletion/polling error, inspect the actual resource status and create
+a fresh destroy plan. This change does not alter the pinned providers or claim
+to fix their previous deletion polling issue. Never remove state to hide an error.
+
+## Offline checks
+
+Run in a separate checkout when using backend-disabled initialization:
 
 ```powershell
 pwsh -NoProfile -File .\tests\Test-ImportProductPhotos.ps1
 pwsh -NoProfile -File .\tests\Test-ProductsSqlEgress.ps1
+pwsh -NoProfile -File .\tests\Test-ManualProductsDeployment.ps1
 ```
 
-GitHub `Terraform checks` initializes with the backend disabled, validates the
-pinned provider schema, runs mocked Terraform plans, and runs both offline scripts.
-It has no Azure credentials and never applies real resources.
+CI validates provider schemas and mocked Terraform plans without Azure credentials.
+Manual-script checks also run on Windows and Linux with fake Terraform/Azure/HTTP
+commands. Live provisioning, SQL connectivity and browser access still require
+the manual Azure checks above.
+
+References: [ACA ingress](https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview),
+[scale rules](https://learn.microsoft.com/en-us/azure/container-apps/scale-app),
+[billing](https://learn.microsoft.com/en-us/azure/container-apps/billing),
+[managed networking](https://learn.microsoft.com/en-us/azure/container-apps/custom-virtual-networks),
+[Stop](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/container-apps/stop?view=rest-resource-manager-containerapps-2025-07-01),
+[Start](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/container-apps/start?view=rest-resource-manager-containerapps-2025-07-01).

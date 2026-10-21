@@ -42,6 +42,7 @@ output "products_deployment" {
     resource_group_name  = azurerm_resource_group.products.name
     image                = var.products_image
     external_ingress     = var.products_external_ingress_enabled
+    api_operator_ipv4    = var.products_external_ingress_enabled ? local.products_api_operator_ipv4 : null
     base_url             = var.deploy_products_app ? "https://${azurerm_container_app.products[0].ingress[0].fqdn}" : null
     outbound_ipv4        = var.deploy_products_app ? azurerm_container_app.products[0].outbound_ip_addresses : []
     migrations_on_start  = var.products_deployment_stage == "serve" && var.products_apply_migrations

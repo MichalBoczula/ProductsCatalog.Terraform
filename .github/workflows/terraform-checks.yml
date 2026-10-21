@@ -21,8 +21,52 @@ jobs:
       - run: terraform init -backend=false -input=false -lockfile=readonly
       - run: terraform fmt -check -recursive
       - run: terraform validate
+      - name: Conflicting local rollout inputs must not leak into mocked tests
+        shell: pwsh
+        run: |
+          @{
+            deploy_products_app = $true
+            products_external_ingress_enabled = $true
+            operator_ipv4 = $null
+            products_api_operator_ipv4 = $null
+            products_image = 'mb0101/product-catalog-api:latest'
+            products_deployment_stage = 'serve'
+          } | ConvertTo-Json | Set-Content conflicting.auto.tfvars.json
       - run: terraform test -no-color
       - name: Offline photo importer checks
         run: pwsh -NoProfile -File tests/Test-ImportProductPhotos.ps1
       - name: Offline SQL egress helper checks
         run: pwsh -NoProfile -File tests/Test-ProductsSqlEgress.ps1
+
+  manual-scripts:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse all PowerShell scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts,tests -Filter *.ps1 -Recurse | ForEach-Object {
+            $tokens = $null; $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { $failed = $true; $errors | Format-List }
+          }
+          if ($failed) { throw 'PowerShell parsing failed' }
+      - name: Parse documented PowerShell examples
+        shell: pwsh
+        run: |
+          Get-ChildItem README.md,docs/*.md | ForEach-Object {
+            $document = [IO.File]::ReadAllText($_.FullName)
+            foreach ($block in [regex]::Matches($document, '(?ms)^```powershell\r?\n(.*?)^```')) {
+              $tokens = $null; $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseInput($block.Groups[1].Value, [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors) { throw "Invalid PowerShell example in $($_.Name): $errors" }
+            }
+          }
+      - name: Offline manual deployment checks
+        shell: pwsh
+        run: ./tests/Test-ManualProductsDeployment.ps1

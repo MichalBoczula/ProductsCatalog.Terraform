@@ -107,14 +107,22 @@ override_resource {
 }
 
 variables {
-  subscription_id    = "11111111-1111-1111-1111-111111111111"
-  operator_object_id = "33333333-3333-3333-3333-333333333333"
-  sql_admin_password = "TestOnly-Sql-123456!"
-  name_suffix        = "demo01"
-  environment        = "dev"
-  location           = "northeurope"
-  sql_location       = "francecentral"
-  operator_ipv4      = null
+  subscription_id                   = "11111111-1111-1111-1111-111111111111"
+  operator_object_id                = "33333333-3333-3333-3333-333333333333"
+  sql_admin_password                = "TestOnly-Sql-123456!"
+  name_suffix                       = "demo01"
+  environment                       = "dev"
+  location                          = "northeurope"
+  sql_location                      = "francecentral"
+  operator_ipv4                     = null
+  products_api_operator_ipv4        = null
+  photos_anonymous_read_enabled     = false
+  deploy_products_app               = false
+  products_image                    = null
+  products_deployment_stage         = "prepare"
+  products_sql_egress_ipv4          = {}
+  products_apply_migrations         = false
+  products_external_ingress_enabled = false
 }
 
 run "products_foundation" {
@@ -284,5 +292,40 @@ run "operator_only_external_test" {
       one(azurerm_container_app.products[0].ingress[0].ip_security_restriction).action == "Allow"
     )
     error_message = "External testing must allow only the explicit operator address."
+  }
+}
+
+run "api_access_without_local_sql_access" {
+  command = plan
+  variables {
+    deploy_products_app               = true
+    products_image                    = "mb0101/product-catalog-api:0123456789abcdef0123456789abcdef01234567"
+    products_external_ingress_enabled = true
+    products_api_operator_ipv4        = "198.51.100.20"
+  }
+  assert {
+    condition = (
+      length(azurerm_mssql_firewall_rule.operator) == 0 &&
+      one(azurerm_container_app.products[0].ingress[0].ip_security_restriction).ip_address_range == "198.51.100.20/32"
+    )
+    error_message = "Browser/API access must not add a laptop SQL firewall rule."
+  }
+}
+
+run "api_address_overrides_legacy_sql_address" {
+  command = plan
+  variables {
+    deploy_products_app               = true
+    products_image                    = "mb0101/product-catalog-api:0123456789abcdef0123456789abcdef01234567"
+    products_external_ingress_enabled = true
+    operator_ipv4                     = "203.0.113.10"
+    products_api_operator_ipv4        = "198.51.100.20"
+  }
+  assert {
+    condition = (
+      azurerm_mssql_firewall_rule.operator[0].start_ip_address == "203.0.113.10" &&
+      one(azurerm_container_app.products[0].ingress[0].ip_security_restriction).ip_address_range == "198.51.100.20/32"
+    )
+    error_message = "Explicit API and SQL operator addresses must remain independent."
   }
 }
