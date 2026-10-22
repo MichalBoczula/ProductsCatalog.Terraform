@@ -85,7 +85,7 @@ variable "sql_admin_password" {
 }
 
 variable "operator_ipv4" {
-  description = "Optional single public IPv4 for local SQL migrations. Null leaves SQL closed; photo import uses Entra RBAC separately."
+  description = "Optional single public IPv4 for direct local SQL access. Null creates no laptop SQL rule; photo import uses Entra RBAC separately. Kept as a fallback for older external API test inputs."
   type        = string
   default     = null
   nullable    = true
@@ -108,6 +108,25 @@ variable "photos_anonymous_read_enabled" {
   type        = bool
   default     = false
   nullable    = false
+}
+
+variable "products_api_operator_ipv4" {
+  description = "Optional public IPv4 for temporary browser/API access only. Unlike operator_ipv4, this does not create a SQL firewall rule. Null falls back to operator_ipv4 for existing deployments."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = var.products_api_operator_ipv4 == null ? true : try(
+      can(regex("^[0-9]{1,3}(\\.[0-9]{1,3}){3}$", var.products_api_operator_ipv4)) &&
+      can(cidrhost("${var.products_api_operator_ipv4}/32", 0)) &&
+      tonumber(split(".", var.products_api_operator_ipv4)[0]) > 0 &&
+      tonumber(split(".", var.products_api_operator_ipv4)[0]) < 224 &&
+      !can(regex("^(10\\.|127\\.|169\\.254\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.|192\\.168\\.)", var.products_api_operator_ipv4)),
+      false
+    )
+    error_message = "products_api_operator_ipv4 must be one public IPv4, without a CIDR suffix, private/loopback address or 0.0.0.0."
+  }
 }
 
 variable "deploy_products_app" {
@@ -179,13 +198,13 @@ variable "products_apply_migrations" {
 }
 
 variable "products_external_ingress_enabled" {
-  description = "Temporary external API testing, restricted to operator_ipv4. Default ingress stays inside the ACA environment."
+  description = "Temporary external API testing, restricted to products_api_operator_ipv4 (or the legacy operator_ipv4 fallback). Default ingress stays inside the ACA environment."
   type        = bool
   default     = false
   nullable    = false
 
   validation {
-    condition     = !var.products_external_ingress_enabled || var.operator_ipv4 != null
-    error_message = "External API testing requires operator_ipv4 so the unauthenticated API is restricted to your /32 address."
+    condition     = !var.products_external_ingress_enabled || var.products_api_operator_ipv4 != null || var.operator_ipv4 != null
+    error_message = "External API testing requires products_api_operator_ipv4 (or legacy operator_ipv4) so the unauthenticated API is restricted to your /32 address."
   }
 }

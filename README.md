@@ -5,6 +5,28 @@ The foundation remains the default. After importing photos, follow the
 [ACA deployment guide](docs/aca-deployment.md) to enable the app and anonymous
 photo reads. See [the deployment plan](docs/deployment-plan.md).
 
+## Repeatable manual deployment scripts
+
+Use the [manual ACA guide](docs/aca-deployment.md) for the complete repeatable
+workflow and for continuing an already deployed environment. It uses one ignored,
+explicitly selected `products-deployment.tfvars.json` file, separate Plan/Apply
+commands and saved-plan checks. After enabling the app, use these scripts or pass
+that file to every Terraform plan; the low-level foundation examples below use
+foundation defaults and must not replace your working deployment inputs.
+
+| Script | Responsibility |
+| --- | --- |
+| `Initialize-ProductsSession.ps1` | Restore executable, Azure subscription, operator/password environment variables and initialize the existing backend |
+| `Invoke-ProductsDeployment.ps1` | Plan/apply Foundation, Prepare, Serve, Runtime, Swagger, Internal or Destroy separately |
+| `Import-ProductPhotos.ps1` | Validate, upload and verify the 60 photos after foundation apply |
+| `Test-ProductsDeployment.ps1` | Inspect the live revision, verify API/seed data and an anonymous photo request |
+| `Set-ProductsAppState.ps1` | Explicit Stop/Start between testing sessions without editing Terraform inputs |
+
+Use `products_api_operator_ipv4` for temporary Swagger access; `operator_ipv4`
+is only needed for direct local SQL access. The existing operator-IP fallback
+remains compatible. After testing, the Internal step removes both personal-IP
+inputs while retaining `products_sql_egress_ipv4`, which the app needs for SQL.
+
 ## Resources and naming
 
 Use lowercase names in the form `<resource-prefix>-ecommercestore-products-<environment>`. Globally unique services also use a stable `name_suffix`. Key Vault uses `ecp` to fit its 24-character limit; Storage names contain only lowercase letters and digits.
@@ -35,104 +57,48 @@ The default plan creates **15 Terraform-managed resources**, or **16** with `ope
 
 ## Manual provisioning from PowerShell
 
-Prerequisites: Terraform **1.16.5**, Azure CLI, an interactive Entra user login, an existing remote state account/container, subscription permissions to create the listed resources and assign RBAC roles, and `Storage Blob Data Contributor` on the remote state container/account. Terraform pins AzureRM **5.8.0** and AzAPI **2.13.0**.
+Prerequisites: PowerShell **7.2+**, Terraform **1.16.5**, Azure CLI, an interactive
+Entra user login, an existing remote state account/container, permission to
+create resources/assign roles, and `Storage Blob Data Contributor` on the state
+container/account. Terraform pins AzureRM **5.8.0** and AzAPI **2.13.0**.
 
-### 1. Prepare local files
+Follow [the manual ACA guide](docs/aca-deployment.md) one step at a time. It covers
+initial local files, reopening the shell, Foundation, photo import, Prepare,
+Serve/migrations, API verification, Runtime, Internal, Stop/Start and Destroy.
 
-Work in a clean clone of **ProductsCatalog.Terraform**, not the earlier whole-store directory. Copy these files once:
-
-```powershell
-Copy-Item terraform.tfvars.example terraform.tfvars
-Copy-Item backend.hcl.example backend.hcl
-```
-
-Edit `terraform.tfvars`: choose a stable globally unique suffix. Leave `operator_ipv4` unset until local SQL migrations are needed; it is not needed for photo import.
-
-Edit `backend.hcl`: replace the state account placeholder with your existing state account name. Keep `container_name = "tfstate"` and the **new** key `products/development.terraform.tfstate`. The existing state account and container are not created, imported or destroyed by this root. Each other environment needs its own key. Do not copy `.terraform/` or state files from another repo.
-
-### 2. Log in and set required inputs
+For an existing environment, preserve `backend.hcl`, `terraform.tfvars` and
+`products-deployment.tfvars.json`. The backend must point to the existing state
+account and `products/development.terraform.tfstate`, never the whole-store key.
+The initializer never copies example files over them or migrates the backend.
 
 ```powershell
-$ecommerceTerraform = Join-Path $env:LOCALAPPDATA `
-    'Programs\Terraform\1.16.5\terraform.exe'
-if (-not (Test-Path $ecommerceTerraform)) { throw 'Terraform 1.16.5 was not found' }
-
-az login
-if ($LASTEXITCODE -ne 0) { throw 'Azure login failed' }
-az account set --subscription Portfolio
-if ($LASTEXITCODE -ne 0) { throw 'Subscription selection failed' }
-
-$env:TF_VAR_subscription_id = az account show --query id --output tsv
-if ($LASTEXITCODE -ne 0) { throw 'Subscription lookup failed' }
-$env:TF_VAR_operator_object_id = az ad signed-in-user show --query id --output tsv
-if ($LASTEXITCODE -ne 0) { throw 'Operator lookup failed' }
-
-$env:TF_VAR_sql_admin_password = [System.Net.NetworkCredential]::new(
-    '', (Read-Host 'Products SQL administrator password' -AsSecureString)
-).Password
+$session = .\scripts\Initialize-ProductsSession.ps1 `
+    -SubscriptionId 'fcbf086b-8ce4-4ca5-a3d7-0c56489e25f6'
+$ecommerceTerraform = $session.terraform_path
 ```
 
-Choose a strong password and retain it securely. Reuse it when reopening your shell or planning destruction; entering a different password plans a rotation. The operator UUID is your human Entra user object ID. Run this first manual apply as that user so it can use the assigned Key Vault role.
+Reuse the same operator Entra UUID and SQL administrator password across sessions.
+The initializer retains existing `TF_VAR_*` values or prompts/looks up the human
+operator when missing. A new password plans a rotation. Terraform state and saved
+plans contain sensitive values even though CLI output masks the password; keep
+them private and never commit or share them.
 
-The password is marked sensitive and is not output. Terraform state and saved plans still contain sensitive values; keep them private and never commit or share them.
-
-### 3. Initialize and check
+Every stage creates a plan first. Apply is a separate action, after reviewing
+its resource list. For example, after testing a working environment:
 
 ```powershell
-& $ecommerceTerraform version
-if ($LASTEXITCODE -ne 0) { throw 'Version check failed' }
-& $ecommerceTerraform init '-backend-config=backend.hcl'
-if ($LASTEXITCODE -ne 0) { throw 'Initialization failed' }
-& $ecommerceTerraform fmt '-check' '-recursive'
-if ($LASTEXITCODE -ne 0) { throw 'Formatting check failed' }
-& $ecommerceTerraform validate
-if ($LASTEXITCODE -ne 0) { throw 'Validation failed' }
-& $ecommerceTerraform test
-if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Internal
 ```
 
-Tests use mock providers and test-only UUIDs/passwords; they do not create Azure resources. They cover naming, photo access, SQL Free settings, the ACA subnet/profile, operator access and rejected inputs.
-
-### 4. Plan, review, then apply
+Review the plan, then run separately:
 
 ```powershell
-& $ecommerceTerraform plan '-input=false' '-out=products-foundation.tfplan'
-if ($LASTEXITCODE -ne 0) { throw 'Planning failed; nothing was applied' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Internal -Action Apply
 ```
 
-Review the plan. For a clean default deployment, expect **15 to add, 0 to change, 0 to destroy**. If a new standalone deployment plans changes/deletions, stop and verify the backend key before applying.
-
-Once the plan is correct, run separately:
-
-```powershell
-& $ecommerceTerraform apply products-foundation.tfplan
-if ($LASTEXITCODE -ne 0) { throw 'Apply failed; inspect the error before retrying' }
-& $ecommerceTerraform output -json products_foundation
-if ($LASTEXITCODE -ne 0) { throw 'Output lookup failed' }
-```
-
-New RBAC assignments can take time to propagate. If creating the Key Vault secret fails with a permission error after the role was successfully assigned, allow propagation, then create/review a fresh plan and apply it. Terraform retains successfully created resources in state; do not delete the state or run a stale saved plan.
-
-### 5. Verify and pause before photo import
-
-```powershell
-$products = (& $ecommerceTerraform output -json products_foundation) | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw 'Output lookup failed' }
-
-az storage container show `
-    --account-name $products.storage_account_name `
-    --name $products.photos_container_name `
-    --auth-mode login --query name --output tsv
-if ($LASTEXITCODE -ne 0) { throw 'Photo container access check failed' }
-
-& $ecommerceTerraform plan '-input=false' '-detailed-exitcode'
-if ($LASTEXITCODE -eq 1) { throw 'Verification plan failed' }
-if ($LASTEXITCODE -eq 2) { throw 'Infrastructure still has changes to review' }
-```
-
-`photos_base_url` is the canonical address prefix. It requires authorization while
-`photos_access` is `private`; `blob` enables individual anonymous reads. Do not
-upload photo files into Terraform state or store expiring SAS tokens in migrations.
+New RBAC assignments can need propagation. If the Key Vault secret creation fails
+after its role assignment succeeds, retain state and inputs, allow propagation,
+and create a fresh reviewed plan. Do not delete state or rerun a stale saved plan.
 
 ## Import catalog photos after apply
 
@@ -181,15 +147,13 @@ changes do not trigger Azure provisioning.
 Restore the same three `TF_VAR_*` values and initialize the same Products backend before planning destruction. This deletes the database, imported photos and disposable Key Vault; retain original photos outside this environment.
 
 ```powershell
-& $ecommerceTerraform plan '-destroy' '-input=false' '-out=products-destroy.tfplan'
-if ($LASTEXITCODE -ne 0) { throw 'Destroy planning failed; nothing was deleted' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Destroy
 ```
 
 Review the resource list, then run separately:
 
 ```powershell
-& $ecommerceTerraform apply products-destroy.tfplan
-if ($LASTEXITCODE -ne 0) { throw 'Destroy failed; keep the state and inspect the error' }
+.\scripts\Invoke-ProductsDeployment.ps1 -Step Destroy -Action Apply
 ```
 
 The external Terraform state account/container and earlier whole-store environment are outside this root's ownership. Delete an application resource group through Azure CLI only as a deliberate recovery step, then reconcile this root's state with a reviewed refresh-only plan/apply.

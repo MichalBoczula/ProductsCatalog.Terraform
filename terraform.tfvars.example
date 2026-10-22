@@ -15,3 +15,4 @@ sql_location = "francecentral"
 # products_deployment_stage     = "prepare"
 # products_apply_migrations     = false
 # products_external_ingress_enabled = false
+# products_api_operator_ipv4        = "203.0.113.10" # Temporary Swagger access only; no local SQL rule.

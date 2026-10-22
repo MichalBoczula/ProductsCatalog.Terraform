@@ -1,6 +1,12 @@
 # The firewall keys come from a reviewed local input file generated AFTER prepare.
 # Do not derive for_each from the app's computed outbound_ip_addresses: the app
 # must be able to start before SQL rules exist, and plan must know all keys.
+locals {
+  # Preserve existing external test configurations while allowing new callers
+  # to grant API access without granting their laptop direct SQL access.
+  products_api_operator_ipv4 = var.products_api_operator_ipv4 != null ? var.products_api_operator_ipv4 : var.operator_ipv4
+}
+
 resource "azurerm_mssql_firewall_rule" "products_aca" {
   for_each         = var.deploy_products_app ? var.products_sql_egress_ipv4 : {}
   name             = "products-aca-${each.key}"
@@ -36,7 +42,7 @@ resource "azurerm_container_app" "products" {
     transport                  = "http"
 
     dynamic "ip_security_restriction" {
-      for_each = var.products_external_ingress_enabled && var.operator_ipv4 != null ? [var.operator_ipv4] : []
+      for_each = var.products_external_ingress_enabled && local.products_api_operator_ipv4 != null ? [local.products_api_operator_ipv4] : []
       content {
         name             = "operator-only"
         action           = "Allow"
